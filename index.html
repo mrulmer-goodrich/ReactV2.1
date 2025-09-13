@@ -1,11 +1,27 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Academic Monitoring</title>
+
+    <!-- ✅ Tailwind via CDN (must be before your app script) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Optional: small theme tweaks -->
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            borderRadius: {
+              '2xl': '1rem',
+            }
+          }
+        }
+      }
+    </script>
   </head>
-  <body>
+  <body class="min-h-screen bg-slate-50">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
