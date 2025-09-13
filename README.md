@@ -1,0 +1,1 @@
+# Academic Monitoring v2\n\nReact + Vite project baseline.
