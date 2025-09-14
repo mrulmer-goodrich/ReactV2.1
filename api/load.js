@@ -1,14 +1,15 @@
-// api/load.js
 import { Redis } from "@upstash/redis";
 
-const redis = Redis.fromEnv();
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN,
+});
 
 export default async function handler(req, res) {
   try {
-    const data = await redis.get("appState");
-    return res.status(200).json({ data: data ? JSON.parse(data) : null });
+    const data = await redis.get("app-state");
+    res.status(200).json({ data });
   } catch (e) {
-    console.error("Load failed", e);
-    return res.status(500).json({ error: "Load failed" });
+    res.status(500).json({ error: e.message });
   }
 }
