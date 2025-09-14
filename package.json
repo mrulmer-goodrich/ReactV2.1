@@ -12,7 +12,8 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "lucide-react": "^0.344.0",
-    "@upstash/redis": "^1.28.3"
+    "@upstash/redis": "^1.28.3",
+    "@vercel/kv": "^1.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",
@@ -22,4 +23,3 @@
     "autoprefixer": "^10.4.20"
   }
 }
-
