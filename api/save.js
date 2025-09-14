@@ -1,10 +1,6 @@
-// /api/save.js — Vercel Serverless Function (Node.js)
-// Saves the entire app state into Vercel KV under the key 'seating-monitor-v7-1'.
-// Body: { "data": <object> }
+import { kv } from '@vercel/kv';
 
-const { kv } = require('@vercel/kv');
-
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
@@ -20,4 +16,4 @@ module.exports = async (req, res) => {
     console.error('KV save error:', err);
     return res.status(500).json({ error: 'KV save error' });
   }
-};
+}
