@@ -195,30 +195,25 @@ function saveState(s){ try { localStorage.setItem(lsKey, JSON.stringify(s)); } c
 /* ---------- App Shell ---------- */
 export default function App(){
   const [state, setState] = useState(loadState());
-  
-// Safety guard: if state isn't ready yet, show something minimal
-if (!state || !Array.isArray(state.classes)) {
-  return <div className="p-6 text-sm text-gray-600">Loading…</div>;
-}
-  // Load from KV on startup
-useEffect(() => {
-  async function load() {
-    try {
-      const r = await fetch("/api/load");
-      const { data } = await r.json();
-      if (data && typeof data === "object") {
-        const safe = migrateLegacy(JSON.stringify(data));
-        setState(safe);
-      }
-      // if no data, keep your existing local/default state
-    } catch (e) {
-      console.error("KV load failed", e);
-    }
-  }
-  load();
-}, []);
 
-  // Auto-save to KV whenever state changes
+  // Load from KV on startup (safe)
+  useEffect(() => {
+    async function load() {
+      try {
+        const r = await fetch("/api/load");
+        const { data } = await r.json();
+        if (data && typeof data === "object") {
+          const safe = migrateLegacy(JSON.stringify(data));
+          setState(safe);
+        }
+      } catch (e) {
+        console.error("KV load failed", e);
+      }
+    }
+    load();
+  }, []);
+
+  // Auto-save to KV on every change (keep this if you already have it)
   useEffect(() => {
     async function save() {
       try {
@@ -233,30 +228,37 @@ useEffect(() => {
     if (state) save();
   }, [state]);
 
-  // still keep localStorage backup
-  useEffect(()=> saveState(state), [state]);
+  // Local backup stays
+  useEffect(() => { saveState(state); }, [state]);
 
   const setTab = (tab)=> setState(p=> ({ ...p, tab }));
 
+  const notReady = !state || !Array.isArray(state.classes);
+
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 to-slate-100">
-      {/* Top bar */}
+      {notReady ? (
+        <div className="p-6 text-sm text-gray-600">Loading…</div>
+      ) : (
+        <>
+          {/* Top bar, pages, etc. (your existing JSX) */}
+          <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
+            <button onClick={()=> setTab("home")} className="flex items-center gap-3 group">
+              <HomeIcon className="h-6 w-6 text-slate-400 group-hover:text-slate-600 transition" />
+              <h1 className="text-2xl font-bold group-hover:text-slate-700 transition">Academic Monitoring</h1>
+            </button>
+            <div className="flex items-center gap-2">
+              <TopExport state={state} />
+              <TopImport onImport={(s)=> setState(migrateLegacy(s))} />
+            </div>
+          </div>
 
-      <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
-        <button onClick={()=> setTab("home")} className="flex items-center gap-3 group">
-          <HomeIcon className="h-6 w-6 text-slate-400 group-hover:text-slate-600 transition" />
-          <h1 className="text-2xl font-bold group-hover:text-slate-700 transition">Academic Monitoring</h1>
-        </button>
-        <div className="flex items-center gap-2">
-          <TopExport state={state} />
-          <TopImport onImport={(s)=> setState(migrateLegacy(s))} />
-        </div>
-      </div>
-
-      {state.tab==="home" && <Home setTab={setTab} />}
-      {state.tab==="setup" && <SetupPage state={state} setState={setState} setTab={setTab} />}
-      {state.tab==="monitor" && <MonitorPage state={state} setState={setState} setTab={setTab} />}
-      {state.tab==="student" && <StudentPage state={state} setState={setState} setTab={setTab} />}
+          {state.tab==="home" && <Home setTab={setTab} />}
+          {state.tab==="setup" && <SetupPage state={state} setState={setState} setTab={setTab} />}
+          {state.tab==="monitor" && <MonitorPage state={state} setState={setState} setTab={setTab} />}
+          {state.tab==="student" && <StudentPage state={state} setState={setState} setTab={setTab} />}
+        </>
+      )}
     </div>
   );
 }
