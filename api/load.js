@@ -5,12 +5,15 @@ const redis = new Redis({
   token: process.env.KV_REST_API_TOKEN,
 });
 
-export default async function handler() {
+export default async function handler(req, res) {
   try {
     const data = await redis.get("app-state");
-    return Response.json({ data: data ?? null });
+    res.setHeader("Content-Type", "application/json");
+    res.status(200).end(JSON.stringify({ data: data ?? null }));
   } catch (e) {
     console.error("KV load failed", e);
-    return Response.json({ error: e.message }, { status: 500 });
+    res.setHeader("Content-Type", "application/json");
+    res.status(500).end(JSON.stringify({ error: e.message }));
   }
 }
+
