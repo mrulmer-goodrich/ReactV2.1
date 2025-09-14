@@ -8,8 +8,9 @@ const redis = new Redis({
 export default async function handler(req, res) {
   try {
     const data = await redis.get("app-state");
-    res.status(200).json({ data });
+    return res.status(200).json({ data: data ?? null });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error("KV load failed", e);
+    return res.status(500).json({ error: e.message });
   }
 }
