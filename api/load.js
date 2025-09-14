@@ -1,19 +1,19 @@
-import { Redis } from "@upstash/redis";
+// /api/load.js — Vercel Serverless Function (Node.js)
+// Returns the latest saved app state from Vercel KV.
+// Requires @vercel/kv and project-linked KV (see README).
 
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
+const { kv } = require('@vercel/kv');
 
-export default async function handler(req, res) {
-  try {
-    const data = await redis.get("app-state");
-    res.setHeader("Content-Type", "application/json");
-    res.status(200).end(JSON.stringify({ data: data ?? null }));
-  } catch (e) {
-    console.error("KV load failed", e);
-    res.setHeader("Content-Type", "application/json");
-    res.status(500).end(JSON.stringify({ error: e.message }));
+module.exports = async (req, res) => {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
   }
-}
-
+  try {
+    const data = await kv.get('seating-monitor-v7-1');
+    return res.status(200).json({ data: data || null });
+  } catch (err) {
+    console.error('KV load error:', err);
+    return res.status(500).json({ error: 'KV load error' });
+  }
+};
