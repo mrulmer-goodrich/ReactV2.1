@@ -197,12 +197,45 @@ function saveState(s){ try { localStorage.setItem(lsKey, JSON.stringify(s)); } c
 /* ---------- App Shell ---------- */
 export default function App(){
   const [state, setState] = useState(loadState());
+
+  // Load from KV on startup
+  useEffect(() => {
+    async function load() {
+      try {
+        const r = await fetch("/api/load");
+        const { data } = await r.json();
+        if (data) setState(data);
+      } catch (e) {
+        console.error("KV load failed", e);
+      }
+    }
+    load();
+  }, []);
+
+  // Auto-save to KV whenever state changes
+  useEffect(() => {
+    async function save() {
+      try {
+        await fetch("/api/save", {
+          method: "POST",
+          body: JSON.stringify({ data: state })
+        });
+      } catch (e) {
+        console.error("KV save failed", e);
+      }
+    }
+    if (state) save();
+  }, [state]);
+
+  // still keep localStorage backup
   useEffect(()=> saveState(state), [state]);
+
   const setTab = (tab)=> setState(p=> ({ ...p, tab }));
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Top bar */}
+
       <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
         <button onClick={()=> setTab("home")} className="flex items-center gap-3 group">
           <HomeIcon className="h-6 w-6 text-slate-400 group-hover:text-slate-600 transition" />
