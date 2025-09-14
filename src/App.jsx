@@ -197,18 +197,22 @@ export default function App(){
   const [state, setState] = useState(loadState());
 
   // Load from KV on startup
-  useEffect(() => {
-    async function load() {
-      try {
-        const r = await fetch("/api/load");
-        const { data } = await r.json();
-        if (data) setState(data);
-      } catch (e) {
-        console.error("KV load failed", e);
+useEffect(() => {
+  async function load() {
+    try {
+      const r = await fetch("/api/load");
+      const { data } = await r.json();
+      if (data && typeof data === "object") {
+        const safe = migrateLegacy(JSON.stringify(data));
+        setState(safe);
       }
+      // if no data, keep your existing local/default state
+    } catch (e) {
+      console.error("KV load failed", e);
     }
-    load();
-  }, []);
+  }
+  load();
+}, []);
 
   // Auto-save to KV whenever state changes
   useEffect(() => {
