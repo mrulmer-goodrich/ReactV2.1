@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download, Upload, Plus, Pencil, Users, Settings, Move3D,
-  Link as LinkIcon, SlidersHorizontal, LayoutTemplate, HomeIcon,
+  Link as LinkIcon, SlidersHorizontal, LayoutTemplate, Home as HomeIcon,
   ListChecks, GraduationCap, Trash2, Wrench
 } from "lucide-react";
 
