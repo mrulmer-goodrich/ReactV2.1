@@ -2,8 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download, Upload, Plus, Pencil, Users, Settings, Move3D,
-  SlidersHorizontal, Trash2, Wrench, Home as HomeIcon,
-  ListChecks, GraduationCap
+  Link as LinkIcon, SlidersHorizontal, LayoutTemplate, HomeIcon
 } from "lucide-react";
 
 /**
