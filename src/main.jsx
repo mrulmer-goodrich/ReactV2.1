@@ -1,9 +1,7 @@
-// MOUNT SANITY TEST main.jsx
+// src/main.jsx
 import React from "react";
 import { createRoot } from "react-dom/client";
-
-⬇️ comment App out for now to avoid any App-level crashes masking the mount
-import App from "./App.jsx";
+import App from "./App.jsx";  // ✅ import the real App
 
 const root = createRoot(document.getElementById("root"));
 root.render(
@@ -19,6 +17,6 @@ root.render(
     >
       MOUNT-OK: React is running and rendering this banner.
     </div>
-    {/* <App /> */}
+    <App />   {/* ✅ render your app below the banner */}
   </React.StrictMode>
 );
