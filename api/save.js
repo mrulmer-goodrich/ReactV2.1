@@ -5,17 +5,23 @@ const redis = new Redis({
   token: process.env.KV_REST_API_TOKEN,
 });
 
-export default async function handler(req) {
+export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return Response.json({ error: "Method not allowed" }, { status: 405 });
+    res.setHeader("Content-Type", "application/json");
+    return res.status(405).end(JSON.stringify({ error: "Method not allowed" }));
   }
 
   try {
-    const { data } = await req.json();
+    // Handle both string and parsed bodies safely
+    const raw = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
+    const { data } = JSON.parse(raw || "{}");
+
     await redis.set("app-state", data ?? {});
-    return Response.json({ ok: true });
+    res.setHeader("Content-Type", "application/json");
+    return res.status(200).end(JSON.stringify({ ok: true }));
   } catch (e) {
     console.error("KV save failed", e);
-    return Response.json({ error: e.message }, { status: 500 });
+    res.setHeader("Content-Type", "application/json");
+    return res.status(500).end(JSON.stringify({ error: e.message }));
   }
 }
