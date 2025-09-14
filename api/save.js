@@ -1,27 +1,23 @@
-import { Redis } from "@upstash/redis";
+// /api/save.js — Vercel Serverless Function (Node.js)
+// Saves the entire app state into Vercel KV under the key 'seating-monitor-v7-1'.
+// Body: { "data": <object> }
 
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
+const { kv } = require('@vercel/kv');
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.setHeader("Content-Type", "application/json");
-    return res.status(405).end(JSON.stringify({ error: "Method not allowed" }));
+module.exports = async (req, res) => {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
   }
-
   try {
-    // Handle both string and parsed bodies safely
-    const raw = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
-    const { data } = JSON.parse(raw || "{}");
-
-    await redis.set("app-state", data ?? {});
-    res.setHeader("Content-Type", "application/json");
-    return res.status(200).end(JSON.stringify({ ok: true }));
-  } catch (e) {
-    console.error("KV save failed", e);
-    res.setHeader("Content-Type", "application/json");
-    return res.status(500).end(JSON.stringify({ error: e.message }));
+    const { data } = req.body || {};
+    if (!data || typeof data !== 'object') {
+      return res.status(400).json({ error: 'Invalid payload: expected { data: <object> }' });
+    }
+    await kv.set('seating-monitor-v7-1', data);
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('KV save error:', err);
+    return res.status(500).json({ error: 'KV save error' });
   }
-}
+};
