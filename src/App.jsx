@@ -192,6 +192,24 @@ function migrateLegacy(raw) {
 function loadState(){ try { const raw = localStorage.getItem(lsKey); return raw ? migrateLegacy(raw) : DEFAULT_STATE(); } catch { return DEFAULT_STATE(); } }
 function saveState(s){ try { localStorage.setItem(lsKey, JSON.stringify(s)); } catch {} }
 
+// --- Error Boundary (shows runtime errors instead of white screen) ---
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state = { hasError: false, err: null }; }
+  static getDerivedStateFromError(err){ return { hasError: true, err }; }
+  componentDidCatch(err, info){ console.error("Render error:", err, info); }
+  render(){
+    if (this.state.hasError){
+      return (
+        <div style={{padding:16,fontFamily:"system-ui"}}>
+          <h2>Something went wrong.</h2>
+          <pre style={{whiteSpace:"pre-wrap"}}>{String(this.state.err)}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 /* ---------- App Shell ---------- */
 export default function App(){
   const [state, setState] = useState(loadState());
