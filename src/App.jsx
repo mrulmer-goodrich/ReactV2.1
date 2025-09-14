@@ -195,7 +195,11 @@ function saveState(s){ try { localStorage.setItem(lsKey, JSON.stringify(s)); } c
 /* ---------- App Shell ---------- */
 export default function App(){
   const [state, setState] = useState(loadState());
-
+  
+// Safety guard: if state isn't ready yet, show something minimal
+if (!state || !Array.isArray(state.classes)) {
+  return <div className="p-6 text-sm text-gray-600">Loading…</div>;
+}
   // Load from KV on startup
 useEffect(() => {
   async function load() {
