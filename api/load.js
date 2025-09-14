@@ -1,16 +1,19 @@
-export default async function handler(req, res) {
-  try {
-    const r = await fetch(`${process.env.KV_REST_API_URL}/get/demo`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}`
-      }
-    });
+// api/save.js
+import { Redis } from "@upstash/redis";
 
-    if (!r.ok) throw new Error("KV read failed");
-    const { result } = await r.json();
-    res.json({ data: result ? JSON.parse(result) : null });
+const redis = Redis.fromEnv();
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  try {
+    const body = JSON.parse(req.body);
+    await redis.set("appState", JSON.stringify(body.data));
+    return res.status(200).json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error("Save failed", e);
+    return res.status(500).json({ error: "Save failed" });
   }
 }
