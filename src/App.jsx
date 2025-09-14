@@ -1,17 +1,19 @@
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download, Upload, Plus, Pencil, Users, Settings, Move3D,
-  Link as LinkIcon, SlidersHorizontal, LayoutTemplate, HomeIcon
+  Link as LinkIcon, SlidersHorizontal, LayoutTemplate, HomeIcon,
+  ListChecks, GraduationCap, Trash2, Wrench
 } from "lucide-react";
 
 /**
- * Academic Monitoring — v7.1
- * - FIX: Move Seats works again (move mode handled before edit-assign; selected seat highlight)
- * - NEW: Student Flags (ML, ML New, IEP/504, EC, Bubble)
- *   • Add/edit in Roster via “Flags” button per student
- *   • Colored dots appear on seats in Monitor (Grid + Free)
- * - Keeps all features from v7 (student page, quick add skill, etc.)
+ * Academic Monitoring — v7.1 (Clean Single-File App.jsx)
+ * - Fixes duplicate React hook imports
+ * - Adds ErrorBoundary + "Loading…" guard
+ * - Loads from /api/load on startup, auto-saves to /api/save with proper JSON headers
+ * - LocalStorage backup
+ * - Pages: Home, Setup, Monitor, Student
+ * - Roster flags (ML, ML New, IEP/504, EC, Bubble)
+ * - Grid and Free layout seating with move/assign + level cycling (0–4, 5=ABSENT)
  */
 
 const lsKey = "seating-monitor-v7-1";
@@ -57,12 +59,12 @@ const NC7 = {
 
 /* ---------- Levels UI (0-4 + 5=ABSENT) ---------- */
 const levelMeta = {
-  0: { name: "N/A", bg: "bg-gray-100", ring: "ring-gray-300", text: "text-gray-700" },
-  1: { name: "Help", bg: "bg-rose-100", ring: "ring-rose-300", text: "text-rose-800" },
-  2: { name: "Developing", bg: "bg-amber-100", ring: "ring-amber-300", text: "text-amber-800" },
-  3: { name: "Proficient", bg: "bg-emerald-100", ring: "ring-emerald-300", text: "text-emerald-800" },
-  4: { name: "Advanced", bg: "bg-sky-100", ring: "ring-sky-300", text: "text-sky-800" },
-  5: { name: "ABSENT", bg: "bg-violet-100", ring: "ring-violet-300", text: "text-violet-800" },
+  0: { name: "N/A",       bg: "bg-gray-100",    ring: "ring-gray-300",    text: "text-gray-700" },
+  1: { name: "Help",      bg: "bg-rose-100",    ring: "ring-rose-300",    text: "text-rose-800" },
+  2: { name: "Developing",bg: "bg-amber-100",   ring: "ring-amber-300",   text: "text-amber-800" },
+  3: { name: "Proficient",bg: "bg-emerald-100", ring: "ring-emerald-300", text: "text-emerald-800" },
+  4: { name: "Advanced",  bg: "bg-sky-100",     ring: "ring-sky-300",     text: "text-sky-800" },
+  5: { name: "ABSENT",    bg: "bg-violet-100",  ring: "ring-violet-300",  text: "text-violet-800" },
 };
 
 /* ---------- Student Flag colors ---------- */
@@ -98,14 +100,15 @@ function cleanStandard(code) {
   return code.replace(/^NC\.7\./, "");
 }
 
-function migrateLegacy(raw) {
+// Accepts object or JSON string
+function migrateLegacy(input) {
   try {
-    const parsed = JSON.parse(raw);
-    const st = parsed && typeof parsed === "object" ? parsed : DEFAULT_STATE();
+    const stIn = typeof input === "string" ? JSON.parse(input) : (input || {});
+    const st = stIn && typeof stIn === "object" ? stIn : DEFAULT_STATE();
 
     if (!Array.isArray(st.classes)) st.classes = DEFAULT_STATE().classes;
 
-    // skills normalize (same as v7)
+    // Normalize skills (lift to root if needed)
     if (Array.isArray(st.skills)) {
       st.skills = st.skills.filter(s => s && typeof s === "object").map(s => ({
         id: typeof s.id === "string" ? s.id : uid(),
@@ -141,7 +144,7 @@ function migrateLegacy(raw) {
       st.skills = lifted;
     }
 
-    // classes normalize + ensure student flags exist
+    // Normalize classes + ensure flags
     st.classes = st.classes.map(cl => {
       const rows = Number.isFinite(cl.rows) ? Math.max(1, Math.min(24, cl.rows)) : 4;
       const cols = Number.isFinite(cl.cols) ? Math.max(1, Math.min(24, cl.cols)) : 6;
@@ -186,13 +189,23 @@ function migrateLegacy(raw) {
     if (typeof st.selectedStudentId !== "string") st.selectedStudentId = null;
 
     return st;
-  } catch { return DEFAULT_STATE(); }
+  } catch {
+    return DEFAULT_STATE();
+  }
 }
 
-function loadState(){ try { const raw = localStorage.getItem(lsKey); return raw ? migrateLegacy(raw) : DEFAULT_STATE(); } catch { return DEFAULT_STATE(); } }
-function saveState(s){ try { localStorage.setItem(lsKey, JSON.stringify(s)); } catch {} }
+function loadState(){
+  try {
+    const raw = localStorage.getItem(lsKey);
+    if (!raw) return DEFAULT_STATE();
+    return migrateLegacy(raw);
+  } catch { return DEFAULT_STATE(); }
+}
+function saveState(s){
+  try { localStorage.setItem(lsKey, JSON.stringify(s)); } catch {}
+}
 
-// --- Error Boundary (shows runtime errors instead of white screen) ---
+// --- Error Boundary ---
 class ErrorBoundary extends React.Component {
   constructor(props){ super(props); this.state = { hasError: false, err: null }; }
   static getDerivedStateFromError(err){ return { hasError: true, err }; }
@@ -210,19 +223,89 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+/* ---------- Small UI bits ---------- */
+function Badge({ children }){
+  return (
+    <span className="inline-flex items-center rounded-full bg-slate-100 border px-2 py-1 text-[11px] text-slate-700">
+      {children}
+    </span>
+  );
+}
+
+function Legend(){
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        {[0,1,2,3,4,5].map(lv=> (
+          <div key={lv} className={`rounded-xl px-2 py-1 text-xs ring-2 ${levelMeta[lv].ring} ${levelMeta[lv].bg} ${levelMeta[lv].text}`}>
+            {levelMeta[lv].name}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2">
+        <div className="text-xs text-slate-600 mb-1">Student Flags</div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          {flagKeys.map(k => (
+            <span key={k} className="inline-flex items-center gap-1">
+              <span className={`h-2.5 w-2.5 rounded-full ${FLAG_META[k].dot}`}></span>{FLAG_META[k].label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TopExport({ state }){
+  const exportJSON = () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `monitoring-state-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <button onClick={exportJSON} className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 shadow-sm bg-white hover:bg-slate-50 border">
+      <Download className="h-4 w-4" />Export
+    </button>
+  );
+}
+
+function TopImport({ onImport }){
+  const importJSON = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result) || "{}");
+        onImport(parsed);
+      } catch { alert("Invalid JSON file."); }
+    };
+    reader.readAsText(file);
+  };
+  return (
+    <label className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 shadow-sm bg-white hover:bg-slate-50 border cursor-pointer">
+      <Upload className="h-4 w-4" />Import
+      <input type="file" accept="application/json" className="hidden"
+             onChange={(e)=>{const f=e.target.files?.[0]; if(f) importJSON(f);}} />
+    </label>
+  );
+}
+
 /* ---------- App Shell ---------- */
 export default function App(){
   const [state, setState] = useState(loadState());
+  const setTab = (tab)=> setState(p=> ({ ...p, tab }));
 
-  // Load from KV on startup (safe)
+  // Load from KV on startup
   useEffect(() => {
     async function load() {
       try {
         const r = await fetch("/api/load");
         const { data } = await r.json();
         if (data && typeof data === "object") {
-          const safe = migrateLegacy(JSON.stringify(data));
-          setState(safe);
+          setState(migrateLegacy(data));
         }
       } catch (e) {
         console.error("KV load failed", e);
@@ -231,13 +314,14 @@ export default function App(){
     load();
   }, []);
 
-  // Auto-save to KV on every change (keep this if you already have it)
+  // Auto-save to KV on every change
   useEffect(() => {
     async function save() {
       try {
         await fetch("/api/save", {
           method: "POST",
-          body: JSON.stringify({ data: state })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: state }),
         });
       } catch (e) {
         console.error("KV save failed", e);
@@ -246,38 +330,39 @@ export default function App(){
     if (state) save();
   }, [state]);
 
-  // Local backup stays
+  // Local backup
   useEffect(() => { saveState(state); }, [state]);
-
-  const setTab = (tab)=> setState(p=> ({ ...p, tab }));
 
   const notReady = !state || !Array.isArray(state.classes);
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 to-slate-100">
-      {notReady ? (
-        <div className="p-6 text-sm text-gray-600">Loading…</div>
-      ) : (
-        <>
-          {/* Top bar, pages, etc. (your existing JSX) */}
-          <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
-            <button onClick={()=> setTab("home")} className="flex items-center gap-3 group">
-              <HomeIcon className="h-6 w-6 text-slate-400 group-hover:text-slate-600 transition" />
-              <h1 className="text-2xl font-bold group-hover:text-slate-700 transition">Academic Monitoring</h1>
-            </button>
-            <div className="flex items-center gap-2">
-              <TopExport state={state} />
-              <TopImport onImport={(s)=> setState(migrateLegacy(s))} />
+    <ErrorBoundary>
+      <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 to-slate-100">
+        {notReady ? (
+          <div className="p-6 text-sm text-gray-600">Loading…</div>
+        ) : (
+          <>
+            {/* Top bar */}
+            <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
+              <button onClick={()=> setTab("home")} className="flex items-center gap-3 group">
+                <HomeIcon className="h-6 w-6 text-slate-400 group-hover:text-slate-600 transition" />
+                <h1 className="text-2xl font-bold group-hover:text-slate-700 transition">Academic Monitoring</h1>
+              </button>
+              <div className="flex items-center gap-2">
+                <TopExport state={state} />
+                <TopImport onImport={(obj)=> setState(migrateLegacy(obj))} />
+              </div>
             </div>
-          </div>
 
-          {state.tab==="home" && <Home setTab={setTab} />}
-          {state.tab==="setup" && <SetupPage state={state} setState={setState} setTab={setTab} />}
-          {state.tab==="monitor" && <MonitorPage state={state} setState={setState} setTab={setTab} />}
-          {state.tab==="student" && <StudentPage state={state} setState={setState} setTab={setTab} />}
-        </>
-      )}
-    </div>
+            {/* Pages */}
+            {state.tab==="home" && <Home setTab={setTab} />}
+            {state.tab==="setup" && <SetupPage state={state} setState={setState} setTab={setTab} />}
+            {state.tab==="monitor" && <MonitorPage state={state} setState={setState} setTab={setTab} />}
+            {state.tab==="student" && <StudentPage state={state} setState={setState} setTab={setTab} />}
+          </>
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
 
@@ -442,11 +527,15 @@ function RosterCard({ state, setState, setTab }){
     if (!trimmed) return false;
     if (nameExists(trimmed)) { alert("That name already exists in this class."); return false; }
     setState(p=>{
-      const next = { ...p }; const idx = next.classes.findIndex(c=> c.id===p.selectedClassId); if (idx<0) return p;
+      const next = { ...p };
+      const idx = next.classes.findIndex(c=> c.id===p.selectedClassId);
+      if (idx<0) return p;
       const cls = { ...next.classes[idx] };
       cls.students = [...cls.students, { id: uid(), name: trimmed, flags: { ml:false, mlNew:false, iep504:false, ec:false, bubble:false } }];
-      next.classes[idx] = cls; return next;
-    }); return true;
+      next.classes[idx] = cls;
+      return next;
+    });
+    return true;
   };
   const editStudent = (id, newName)=>{
     const trimmed = (newName||"").trim(); if (!trimmed) return;
@@ -793,7 +882,7 @@ function MonitorPage({ state, setState, setTab }){
     });
   };
 
-  // Move/swap in grid (FIX: prioritize move mode)
+  // Move/swap in grid
   const [moveMode, setMoveMode] = useState(false);
   const [moveSource, setMoveSource] = useState(null); // {r,c}
   const swapSeats = (a,b)=>{
@@ -858,7 +947,7 @@ function MonitorPage({ state, setState, setTab }){
   };
   const onPointerUpBoard = ()=> setDragging(null);
 
-  // Assign modal (prevents duplicate seating by auto-moving)
+  // Assign modal
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignPos, setAssignPos] = useState(null);
   const [filter, setFilter] = useState("");
@@ -1155,140 +1244,108 @@ function FreeBoard({ currentClass, getLevel, studentName, studentFlags, onPointe
 }
 
 /* ========================== Student Detail Page ========================== */
-function StudentPage({ state, setState }){
+function StudentPage({ state, setState, setTab }){
   const cl = state.classes.find(c=> c.id===state.selectedClassId);
   if (!cl || !state.selectedStudentId) return null;
   const student = cl.students.find(s=> s.id===state.selectedStudentId);
-  const classSkills = state.skills.filter(s=> s.classIds.includes(cl.id));
+  if (!student) return null;
 
-  // Group skills by domain, sort domains & skills alphabetically
-  const groups = {};
-  classSkills.forEach(sk=>{
-    const dom = sk.domain || "(No Domain)";
-    if (!groups[dom]) groups[dom] = [];
-    groups[dom].push(sk);
-  });
-  const domains = Object.keys(groups).sort((a,b)=> a.localeCompare(b));
-  domains.forEach(d=> groups[d].sort((a,b)=> a.name.localeCompare(b.name)));
+  const classSkills = state.skills.filter(s=> s.classIds.includes(state.selectedClassId));
 
-  const getLevel = (skillId)=>{
-    const lv = cl.marks?.[skillId]?.[student.id];
-    return (typeof lv === "number" ? lv : 0);
+  const getLevel = (skillId)=> {
+    const v = cl.marks?.[skillId]?.[student.id];
+    return typeof v === "number" ? v : 0;
+  };
+  const setLevel = (skillId, lv)=> {
+    setState(p=>{
+      const next={...p};
+      const idx = next.classes.findIndex(c=> c.id===p.selectedClassId);
+      if (idx<0) return p;
+      const cls = { ...next.classes[idx] };
+      cls.marks = { ...cls.marks };
+      if (!cls.marks[skillId]) cls.marks[skillId] = {};
+      cls.marks[skillId][student.id] = lv;
+      next.classes[idx] = cls;
+      return next;
+    });
+  };
+
+  const cycle = (skillId)=> {
+    const cur = getLevel(skillId);
+    const nxt = (cur+1) % 6;
+    setLevel(skillId, nxt);
+  };
+
+  const toggleFlag = (key)=> {
+    setState(p=>{
+      const next={...p};
+      const idx = next.classes.findIndex(c=> c.id===p.selectedClassId);
+      if (idx<0) return p;
+      const cls = { ...next.classes[idx] };
+      cls.students = cls.students.map(s=> s.id===student.id ? { ...s, flags: { ...s.flags, [key]: !s.flags?.[key] } } : s);
+      next.classes[idx] = cls;
+      return next;
+    });
   };
 
   return (
-    <div className="mx-auto max-w-7xl px-4 pb-10">
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={()=> setState(p=> ({ ...p, tab: "monitor" }))} className="rounded-xl border px-3 py-2 bg-white hover:bg-slate-50">← Back to Monitor</button>
-        <Badge>Class: {cl.name}</Badge>
+    <div className="mx-auto max-w-4xl px-4 pb-10">
+      <div className="flex items-center justify-between mt-6 mb-4">
+        <h2 className="text-2xl font-semibold">{student.name}</h2>
+        <div className="flex items-center gap-2">
+          <button className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50" onClick={()=> setTab("monitor")}>Back to Monitor</button>
+        </div>
       </div>
 
-      <div className="rounded-3xl bg-white p-4 shadow-sm border">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-10 w-10 rounded-xl bg-slate-100 grid place-items-center">👤</div>
-          <div>
-            <h2 className="text-xl font-bold">{student?.name || "Student"}</h2>
-            <p className="text-xs text-slate-500">All skills linked to this class (colored by current level)</p>
-            {/* flags summary */}
-            <div className="mt-1 flex items-center gap-2">
-              {flagKeys.filter(k=> student?.flags?.[k]).map(k=> (
-                <span key={k} className="inline-flex items-center gap-1 text-xs">
-                  <span className={`h-2.5 w-2.5 rounded-full ${FLAG_META[k].dot}`}></span>{FLAG_META[k].label}
+      <div className="grid md:grid-cols-[260px_minmax(0,1fr)] gap-4 items-start">
+        {/* Flags */}
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <h3 className="font-semibold mb-2">Flags</h3>
+          <div className="space-y-2">
+            {flagKeys.map(k => (
+              <label key={k} className="flex items-center justify-between text-sm">
+                <span className="inline-flex items-center gap-2">
+                  <span className={`h-2.5 w-2.5 rounded-full ${FLAG_META[k].dot}`}></span>
+                  {FLAG_META[k].label}
                 </span>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {domains.length === 0 ? (
-          <div className="text-sm text-slate-500">No skills have been set up for this class yet.</div>
-        ) : (
-          <div className="space-y-6">
-            {domains.map(dom=> (
-              <div key={dom}>
-                <h3 className="text-sm font-semibold text-slate-700 mb-2">{dom}</h3>
-                <div className="flex flex-col gap-2">
-                  {groups[dom].map(sk=>{
-                    const lv = getLevel(sk.id);
-                    const meta = levelMeta[lv];
-                    return (
-                      <div key={sk.id} className={`rounded-xl px-3 py-2 ring-1 ${meta.ring} ${meta.bg}`}>
-                        <div className="text-sm font-medium">{sk.name}</div>
-                        <div className="text-xs text-slate-600 space-x-2">
-                          {sk.standardCode && <span>Std: {sk.standardCode}</span>}
-                          {sk.description && <span>{sk.description}</span>}
-                          <span className="text-slate-500">•</span>
-                          <span className="text-slate-700">Level: {meta.name}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                <input type="checkbox" checked={!!student.flags?.[k]} onChange={()=> toggleFlag(k)} />
+              </label>
             ))}
           </div>
-        )}
+        </div>
+
+        {/* Skills table */}
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <h3 className="font-semibold mb-3">Skill Levels</h3>
+          {classSkills.length === 0 ? (
+            <div className="text-sm text-slate-500">No skills linked to this class yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {classSkills.map(sk => {
+                const lv = getLevel(sk.id);
+                const meta = levelMeta[lv];
+                return (
+                  <div key={sk.id} className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2">
+                    <div className="text-sm">
+                      <div className="font-medium">{sk.name}</div>
+                      <div className="text-xs text-slate-500">
+                        {sk.domain ? `${sk.domain}` : ""}{sk.standardCode ? ` — ${sk.standardCode}` : ""}{sk.description ? ` — ${sk.description}` : ""}
+                      </div>
+                    </div>
+                    <button
+                      className={`text-xs rounded-lg ring-2 px-2 py-1 ${meta.ring} ${meta.bg} ${meta.text}`}
+                      onClick={()=> cycle(sk.id)}
+                      title="Click to cycle 0–5"
+                    >
+                      {meta.name}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
-
-/* ---------- UI bits ---------- */
-function Badge({ children }){ return <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-gray-100">{children}</span>; }
-
-function Legend(){
-  return (
-    <div className="space-y-2">
-      {Object.entries(levelMeta).map(([k,m])=> (
-        <div key={k} className="flex items-center gap-2 text-sm text-gray-700">
-          <span className={`h-3 w-3 inline-block rounded ${m.bg} ring-1 ${m.ring}`}></span>
-          <span>{m.name}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TopExport({ state }){
-  const exportJSON = ()=>{
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `monitoring-${new Date().toISOString().slice(0,10)}.json`; a.click();
-    URL.revokeObjectURL(url);
-  };
-  return (
-    <button onClick={exportJSON} className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 shadow-sm bg-white hover:bg-slate-50 border">
-      <Download className="h-4 w-4" /> Export
-    </button>
-  );
-}
-function TopImport({ onImport }){
-  return (
-    <label className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 shadow-sm bg-white hover:bg-slate-50 border cursor-pointer">
-      <Upload className="h-4 w-4" /> Import
-      <input type="file" accept="application/json" className="hidden" onChange={(e)=> {
-        const f=e.target.files?.[0]; if(!f) return;
-        const reader=new FileReader();
-        reader.onload=()=>{ try { onImport(String(reader.result)); } catch { alert("Invalid JSON file."); } };
-        reader.readAsText(f);
-      }} />
-    </label>
-  );
-}
-
-/* ---------- Lightweight tests ---------- */
-(function runTests(){
-  const bad = JSON.stringify({ classes:[{ id:"A", rows:"x", cols:null, seats:[{}], students:[{id:"s1",name:"A"}] }], skills:[{ id:1, name:2, standardCode:3, classIds:"nope" }] });
-  const s1 = migrateLegacy(bad);
-  console.assert(Array.isArray(s1.classes) && s1.classes.length>=1, "classes present");
-  console.assert(Array.isArray(s1.skills), "skills array present");
-  // ensure flags exist
-  const stu = s1.classes[0].students?.[0];
-  console.assert(stu && typeof stu.flags === "object", "student flags present");
-
-  const raw2 = JSON.stringify({ classes:[{ id:"C1", rows:1, cols:1, seats:[{r:0,c:0,studentId:null}], students:[{id:"x",name:"Y"}], marks:{}, skills:[{name:"Old", standardCode:"NC.7.EE.3"}] }], selectedClassId:"C1" });
-  const s2 = migrateLegacy(raw2);
-  const anyStd = (s2.skills.find(x=> x.standardCode) || {}).standardCode || "";
-  console.assert(!anyStd.startsWith("NC.7."), "NC.7 stripped");
-})();
