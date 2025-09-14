@@ -2,23 +2,28 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download, Upload, Plus, Pencil, Users, Settings, Move3D, Link as LinkIcon,
   SlidersHorizontal, LayoutTemplate, Trash2, Wrench, Home as HomeIcon,
-  ListChecks, GraduationCap
+  ListChecks, GraduationCap, User as UserIcon
 } from "lucide-react";
 
 /**
- * Academic Monitoring — v6 (Your requested updates)
+ * Academic Monitoring — v7 (night build)
  *
- * What’s new in this drop-in App.jsx:
- * - Prevent duplicate seat assignment: assigning a student moves them from any other seat automatically.
- * - Monitor page layout: LEFT = fixed Legend, CENTER = board, RIGHT = compact controls (Grid/Move/Edit).
- * - Quick Add Skill on Monitor: add skill with Domain/Standard picklists AND checkboxes to link to multiple classes.
- * - Home link: clicking title or the big graphic returns to Home.
- * - Centered, color-coded “Setup / Monitor” toggle strip on BOTH Setup and Monitor pages.
- * - Setup clarity: “Working in: <Class>” badge; Skills form shows class checkboxes so you see/link which classes a skill belongs to.
- * - Everything else stays: import/export, free drag, tap-to-level, migration, Tailwind CDN in index.html.
+ * ✅ “Working in:” badges moved into Roster + Skills cards
+ * ✅ Skills card UX aligns with Classes: Add + Search + List; Add/Edit form kept (cascading Domain→Standard + class checkboxes)
+ * ✅ Bigger centered Setup/Monitor toggle (color-coded) on Setup & Monitor pages
+ * ✅ Monitor layout: LEFT column has Legend, and directly below it the Controls; board gets more space
+ * ✅ Student Detail page (tab: "student") with Back button; shows ALL class-linked skills for that student,
+ *    grouped by Domain, alphabetical within domain; skill names colored by that student’s level; shows N/A when no data
+ * ✅ From Monitor seats: tiny “User” icon in top-left opens student detail (single-tap still cycles levels)
+ * ✅ From Roster: “View” button opens student detail
+ * ✅ Add “ABSENT” as new level at the end of the cycle; per-skill flag; distinct color
+ * ✅ Empty seats show no “(empty)” text (truly blank)
+ * ✅ Prevent duplicate seat assignment (auto-move student)
+ * ✅ Grid size control moved to Monitor Controls (alongside Edit Assign & Grid/Free)
+ * ✅ Quick Add Skill on Monitor links to multiple classes at creation
  */
 
-const lsKey = "seating-monitor-v6";
+const lsKey = "seating-monitor-v7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 /* ---------- Domains & Standards ---------- */
@@ -59,13 +64,14 @@ const NC7 = {
   ],
 };
 
-/* ---------- Levels UI ---------- */
+/* ---------- Levels UI (0-4 + 5=ABSENT) ---------- */
 const levelMeta = {
-  0: { name: "N/A", bg: "bg-gray-100", ring: "ring-gray-300", text: "text-gray-600" },
+  0: { name: "N/A", bg: "bg-gray-100", ring: "ring-gray-300", text: "text-gray-700" },
   1: { name: "Help", bg: "bg-rose-100", ring: "ring-rose-300", text: "text-rose-800" },
   2: { name: "Developing", bg: "bg-amber-100", ring: "ring-amber-300", text: "text-amber-800" },
   3: { name: "Proficient", bg: "bg-emerald-100", ring: "ring-emerald-300", text: "text-emerald-800" },
   4: { name: "Advanced", bg: "bg-sky-100", ring: "ring-sky-300", text: "text-sky-800" },
+  5: { name: "ABSENT", bg: "bg-violet-100", ring: "ring-violet-300", text: "text-violet-800" }, // new
 };
 
 /* ---------- Defaults & Migration ---------- */
@@ -81,7 +87,8 @@ const DEFAULT_STATE = () => {
     selectedClassId: classId,
     selectedSkillId: null,
     editAssignMode: false,
-    tab: "home", // "home" | "setup" | "monitor"
+    tab: "home",           // "home" | "setup" | "monitor" | "student"
+    selectedStudentId: null,
   };
 };
 
@@ -160,7 +167,9 @@ function migrateLegacy(raw) {
     if (st.selectedSkillId && !st.skills.find(s=> s.id===st.selectedSkillId))
       st.selectedSkillId = null;
     if (typeof st.editAssignMode !== "boolean") st.editAssignMode = false;
-    if (!["home","setup","monitor"].includes(st.tab)) st.tab = "home";
+    if (!["home","setup","monitor","student"].includes(st.tab)) st.tab = "home";
+    if (typeof st.selectedStudentId !== "string") st.selectedStudentId = null;
+
     return st;
   } catch { return DEFAULT_STATE(); }
 }
@@ -191,6 +200,7 @@ export default function App(){
       {state.tab==="home" && <Home setTab={setTab} />}
       {state.tab==="setup" && <SetupPage state={state} setState={setState} setTab={setTab} />}
       {state.tab==="monitor" && <MonitorPage state={state} setState={setState} setTab={setTab} />}
+      {state.tab==="student" && <StudentPage state={state} setState={setState} setTab={setTab} />}
     </div>
   );
 }
@@ -200,7 +210,7 @@ function Home({ setTab }){
   return (
     <div className="mx-auto max-w-7xl px-4 pb-10">
       <div className="rounded-3xl bg-white border shadow-sm p-10 grid gap-8">
-        {/* Fun graphic clickable to go Home; fixed aspect prevents distortion */}
+        {/* Fun graphic clickable; fixed aspect prevents distortion */}
         <button onClick={()=> setTab("home")} className="mx-auto w-full max-w-3xl">
           <div className="relative w-full rounded-3xl overflow-hidden border bg-gradient-to-br from-sky-50 via-fuchsia-50 to-emerald-50 hover:opacity-95 transition">
             <div className="aspect-[16/7] w-full grid place-items-center">
@@ -233,40 +243,35 @@ function Home({ setTab }){
 function SetupPage({ state, setState, setTab }){
   return (
     <div className="mx-auto max-w-7xl px-4 pb-10">
-      {/* Centered color-coded page toggle */}
-      <CenteredToggle active="setup" setTab={setTab} />
-
-      {/* Working-in badge */}
-      <div className="mt-4 mb-2">
-        <Badge>Working in: {state.classes.find(c=> c.id===state.selectedClassId)?.name || "—"}</Badge>
-      </div>
+      <CenteredToggleBig active="setup" setTab={setTab} />
 
       {/* 2 rows */}
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className="grid lg:grid-cols-2 gap-4 mt-6">
         <ClassListCard state={state} setState={setState} />
-        <RosterCard state={state} setState={setState} />
+        <RosterCard state={state} setState={setState} setTab={setTab} />
       </div>
       <div className="grid lg:grid-cols-2 gap-4 mt-4">
         <SkillsCard state={state} setState={setState} />
-        <SettingsCard state={state} setState={setState} />
+        {/* No Modifications card here anymore */}
+        <SetupHelperCard state={state} />
       </div>
     </div>
   );
 }
 
-function CenteredToggle({ active, setTab }){
+function CenteredToggleBig({ active, setTab }){
   return (
     <div className="flex items-center justify-center">
       <div className="rounded-full p-1 bg-white border shadow-sm inline-flex">
         <button
           onClick={()=> setTab("setup")}
-          className={`px-4 py-2 rounded-full text-sm font-medium ${active==="setup" ? "text-white bg-gradient-to-r from-sky-500 to-indigo-500" : "text-slate-700 hover:bg-slate-50"}`}
+          className={`px-6 py-3 rounded-full text-sm md:text-base font-semibold ${active==="setup" ? "text-white bg-gradient-to-r from-sky-500 to-indigo-500" : "text-slate-700 hover:bg-slate-50"}`}
         >
           Setup
         </button>
         <button
           onClick={()=> setTab("monitor")}
-          className={`px-4 py-2 rounded-full text-sm font-medium ${active==="monitor" ? "text-white bg-gradient-to-r from-emerald-500 to-teal-500" : "text-slate-700 hover:bg-slate-50"}`}
+          className={`px-6 py-3 rounded-full text-sm md:text-base font-semibold ${active==="monitor" ? "text-white bg-gradient-to-r from-emerald-500 to-teal-500" : "text-slate-700 hover:bg-slate-50"}`}
         >
           Monitor
         </button>
@@ -275,19 +280,22 @@ function CenteredToggle({ active, setTab }){
   );
 }
 
-function SectionCard({ title, icon, children }){
+function SectionCard({ title, icon, extra, children }){
   return (
     <div className="rounded-3xl bg-white p-4 shadow-sm border">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="h-8 w-8 rounded-full bg-slate-100 grid place-items-center">{icon}</div>
-        <h3 className="font-semibold">{title}</h3>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="h-8 w-8 rounded-full bg-slate-100 grid place-items-center">{icon}</div>
+          <h3 className="font-semibold">{title}</h3>
+        </div>
+        {extra}
       </div>
       {children}
     </div>
   );
 }
 
-/* ----- Class List (like roster) ----- */
+/* ----- Class List ----- */
 function ClassListCard({ state, setState }){
   const [newClassName, setNewClassName] = useState("");
   const [filter, setFilter] = useState("");
@@ -328,7 +336,11 @@ function ClassListCard({ state, setState }){
     .sort((a,b)=> a.name.localeCompare(b.name));
 
   return (
-    <SectionCard title="Classes" icon={<Users className="h-4 w-4" />}>
+    <SectionCard
+      title="Classes"
+      icon={<Users className="h-4 w-4" />}
+      extra={<Badge>Working in: {state.classes.find(c=> c.id===state.selectedClassId)?.name || "—"}</Badge>}
+    >
       <form onSubmit={(e)=>{ e.preventDefault(); addClass(); }} className="flex items-center gap-2 mb-2">
         <input value={newClassName} onChange={(e)=> setNewClassName(e.target.value)} placeholder="e.g., Period 2" className="flex-1 rounded-xl border px-3 py-2 text-sm" />
         <button type="submit" className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50">Add</button>
@@ -350,7 +362,7 @@ function ClassListCard({ state, setState }){
 }
 
 /* ----- Roster ----- */
-function RosterCard({ state, setState }){
+function RosterCard({ state, setState, setTab }){
   const cl = state.classes.find(c=> c.id===state.selectedClassId);
   const [newName, setNewName] = useState("");
   const nameExists = (nm)=> cl.students.some(s=> s.name.trim().toLowerCase() === nm.trim().toLowerCase());
@@ -375,9 +387,7 @@ function RosterCard({ state, setState }){
     if (!confirm("Remove this student? Their marks will be cleared and seat unassigned.")) return;
     setState(p=>{ const next={...p}; const idx=next.classes.findIndex(c=> c.id===p.selectedClassId); if(idx<0) return p;
       const cls={...next.classes[idx]};
-      // unassign from any seat(s)
       cls.seats = cls.seats.map(s=> s.studentId===id ? { ...s, studentId: null } : s);
-      // clear marks
       for (const k of Object.keys(cls.marks)) if (cls.marks[k] && id in cls.marks[k]) delete cls.marks[k][id];
       cls.students = cls.students.filter(s=> s.id!==id);
       next.classes[idx]=cls; return next; });
@@ -389,20 +399,35 @@ function RosterCard({ state, setState }){
   };
   const onSubmit=(e)=>{ e.preventDefault(); if(addStudent(newName)) setNewName(""); };
 
+  const openStudent = (id)=> setState(p=> ({ ...p, tab: "student", selectedStudentId: id }));
+
   return (
-    <SectionCard title="Roster" icon={<ListChecks className="h-4 w-4" />}>
+    <SectionCard
+      title="Roster"
+      icon={<ListChecks className="h-4 w-4" />}
+      extra={<Badge>Working in: {cl?.name || "—"}</Badge>}
+    >
       <form onSubmit={onSubmit} className="flex items-center gap-2 mb-2">
         <input value={newName} onChange={(e)=> setNewName(e.target.value)} placeholder="First Last" className="flex-1 rounded-xl border px-3 py-2 text-sm" />
         <button type="submit" className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50">Add</button>
       </form>
       <div className="max-h-64 overflow-y-auto divide-y">
-        {cl.students.map(s=> <StudentRow key={s.id} s={s} editStudent={editStudent} deleteStudent={deleteStudent} clearAllForStudent={clearAllForStudent} />)}
+        {cl.students.map(s=> (
+          <StudentRow
+            key={s.id}
+            s={s}
+            editStudent={editStudent}
+            deleteStudent={deleteStudent}
+            clearAllForStudent={clearAllForStudent}
+            onView={()=> openStudent(s.id)}
+          />
+        ))}
       </div>
     </SectionCard>
   );
 }
 
-function StudentRow({ s, editStudent, deleteStudent, clearAllForStudent }){
+function StudentRow({ s, editStudent, deleteStudent, clearAllForStudent, onView }){
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(s.name);
   const onSave = ()=> { editStudent(s.id, val); setEditing(false); };
@@ -421,6 +446,7 @@ function StudentRow({ s, editStudent, deleteStudent, clearAllForStudent }){
       ) : (
         <div className="flex items-center gap-3">
           <button className="text-xs text-blue-600" onClick={()=> setEditing(true)}><Pencil className="h-3 w-3 inline mr-1" />Edit</button>
+          <button className="text-xs" onClick={onView}><UserIcon className="h-3 w-3 inline mr-1" />View</button>
           <button className="text-xs text-amber-700" onClick={()=> clearAllForStudent(s.id)}>Clear all</button>
           <button className="text-xs text-red-600" onClick={()=> deleteStudent(s.id)}><Trash2 className="h-3 w-3 inline mr-1" />Delete</button>
         </div>
@@ -429,12 +455,13 @@ function StudentRow({ s, editStudent, deleteStudent, clearAllForStudent }){
   );
 }
 
-/* ----- Skills with cascading picklists + list + class checkboxes ----- */
+/* ----- Skills (Add + Search + List; Working in badge) ----- */
 function SkillsCard({ state, setState }){
-  const classSkills = useMemo(()=> state.skills.filter(s=> s.classIds.includes(state.selectedClassId)), [state]);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [filter, setFilter] = useState("");
+
+  const classSkills = useMemo(()=> state.skills.filter(s=> s.classIds.includes(state.selectedClassId)), [state]);
 
   const openNew = ()=> { setEditing(null); setFormOpen(true); };
   const openEdit = (sk)=> { setEditing(sk); setFormOpen(true); };
@@ -454,7 +481,12 @@ function SkillsCard({ state, setState }){
     .sort((a,b)=> a.name.localeCompare(b.name));
 
   return (
-    <SectionCard title="Skills (Setup)" icon={<SlidersHorizontal className="h-4 w-4" />}>
+    <SectionCard
+      title="Skills (Setup)"
+      icon={<SlidersHorizontal className="h-4 w-4" />}
+      extra={<Badge>Working in: {state.classes.find(c=> c.id===state.selectedClassId)?.name || "—"}</Badge>}
+    >
+      {/* Add + Search header (mirrors Class card) */}
       <div className="flex items-center gap-2 mb-2">
         <button onClick={openNew} className="inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm hover:bg-slate-50"><Plus className="h-4 w-4" />Add Skill</button>
         <input value={filter} onChange={(e)=> setFilter(e.target.value)} placeholder="Search skills" className="flex-1 rounded-xl border px-3 py-2 text-sm" />
@@ -480,6 +512,7 @@ function SkillsCard({ state, setState }){
         />
       )}
 
+      {/* List */}
       <div className="max-h-64 overflow-y-auto divide-y">
         {visible.map(sk=> (
           <div key={sk.id} className="py-2 flex items-start justify-between gap-2">
@@ -601,46 +634,17 @@ function SkillForm({ initial, onSave, onCancel, classes = [], defaultClassId }){
   );
 }
 
-/* ----- Settings (only on Setup) ----- */
-function SettingsCard({ state, setState }){
-  const cl = state.classes.find(c=> c.id===state.selectedClassId);
-  const [rows, setRows] = useState(cl.rows);
-  const [cols, setCols] = useState(cl.cols);
-  useEffect(()=> { setRows(cl.rows); setCols(cl.cols); }, [cl.rows, cl.cols]);
-
-  const applySize = ()=> setState(p=>{
-    const next={...p}; const idx=next.classes.findIndex(c=> c.id===p.selectedClassId); if(idx<0) return p;
-    const cls={...next.classes[idx]}; const seats=[];
-    for(let r=0;r<rows;r++){ for(let c=0;c<cols;c++){ const ex=cls.seats.find(s=> s.r===r && s.c===c); seats.push(ex?ex:{ r, c, studentId:null }); } }
-    cls.rows=rows; cls.cols=cols; cls.seats=seats; next.classes[idx]=cls; return next;
-  });
-
+function SetupHelperCard({ state }){
   return (
-    <SectionCard title="Modifications" icon={<Wrench className="h-4 w-4" />}>
-      <div className="space-y-3">
-        <div>
-          <div className="text-sm font-medium mb-1">Edit Seat Assignment Mode</div>
-          <button onClick={()=> setState(p=> ({ ...p, editAssignMode: !p.editAssignMode }))} className={`rounded-xl border px-3 py-1 text-sm ${state.editAssignMode? "bg-emerald-50 border-emerald-300" : "hover:bg-slate-50"}`}>
-            {state.editAssignMode ? "ON" : "OFF"}
-          </button>
-        </div>
-        <div>
-          <div className="text-sm font-medium mb-1">Layout Mode</div>
-          <div className="flex items-center gap-2">
-            <button onClick={()=> setState(p=> { const next={...p}; const idx=next.classes.findIndex(c=> c.id===p.selectedClassId); next.classes[idx]={...next.classes[idx], layoutMode:"grid"}; return next; })} className={`rounded-xl border px-3 py-1 text-sm ${cl.layoutMode==="grid" ? "bg-slate-100" : "hover:bg-slate-50"}`}>Grid</button>
-            <button onClick={()=> setState(p=> { const next={...p}; const idx=next.classes.findIndex(c=> c.id===p.selectedClassId); next.classes[idx]={...next.classes[idx], layoutMode:"free"}; return next; })} className={`rounded-xl border px-3 py-1 text-sm ${cl.layoutMode==="free" ? "bg-slate-100" : "hover:bg-slate-50"}`}>Free</button>
-          </div>
-        </div>
-        <div>
-          <div className="text-sm font-medium mb-1">Grid Size</div>
-          <div className="flex items-center gap-2">
-            <input type="number" min={1} max={24} value={rows} onChange={(e)=> setRows(parseInt(e.target.value||"1"))} className="w-20 rounded-xl border px-2 py-1 text-sm" />
-            <span className="text-sm text-gray-600">×</span>
-            <input type="number" min={1} max={24} value={cols} onChange={(e)=> setCols(parseInt(e.target.value||"1"))} className="w-20 rounded-xl border px-2 py-1 text-sm" />
-            <button onClick={applySize} className="rounded-xl border px-3 py-1 text-sm hover:bg-slate-50">Apply</button>
-          </div>
-        </div>
-      </div>
+    <SectionCard
+      title="Tips"
+      icon={<Wrench className="h-4 w-4" />}
+    >
+      <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1">
+        <li>Use <b>Roster</b> to add/edit/delete students. Click <b>View</b> to open a student’s detail page.</li>
+        <li>Add skills in <b>Skills</b>. Pick a Domain, then a Standard, and link to multiple classes.</li>
+        <li>Switch to <b>Monitor</b> to assign seats, drag desks (Free layout), and tap to track skill levels.</li>
+      </ul>
     </SectionCard>
   );
 }
@@ -667,7 +671,7 @@ function MonitorPage({ state, setState, setTab }){
     setState(prev=>{
       const next={...prev}; const cls=next.classes.find(c=> c.id===prev.selectedClassId); if(!cls) return prev;
       const cur = cls.marks[selectedSkill.id]?.[studentId] ?? 0;
-      const newLevel = (cur+1)%5;
+      const newLevel = (cur+1) % 6; // now 0..5 with 5=ABSENT
       if (!cls.marks[selectedSkill.id]) cls.marks[selectedSkill.id]={};
       cls.marks[selectedSkill.id][studentId]=newLevel; return next;
     });
@@ -747,7 +751,6 @@ function MonitorPage({ state, setState, setTab }){
     setState(p=>{
       const next={...p}; const idx=next.classes.findIndex(c=> c.id===p.selectedClassId); if(idx<0) return p;
       const cls={...next.classes[idx]}; const seats = cls.seats.map(s=> ({...s}));
-      // If assigning a student, remove them from any other seat first
       if (studentId){
         seats.forEach(s=> { if (s.studentId === studentId) s.studentId = null; });
       }
@@ -761,15 +764,17 @@ function MonitorPage({ state, setState, setTab }){
   // Quick Add Skill modal on Monitor
   const [quickSkillOpen, setQuickSkillOpen] = useState(false);
 
+  // Open Student detail from Monitor (via icon)
+  const openStudent = (id)=> setState(p=> ({ ...p, tab: "student", selectedStudentId: id }));
+
   if (!currentClass) return null;
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-10">
-      {/* Centered color-coded page toggle */}
-      <CenteredToggle active="monitor" setTab={setTab} />
+      <CenteredToggleBig active="monitor" setTab={setTab} />
 
       {/* Top row: selectors + 'Quick Add Skill' */}
-      <div className="rounded-3xl bg-white p-4 shadow-sm border mt-4">
+      <div className="rounded-3xl bg-white p-4 shadow-sm border mt-6">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-gray-500" />
@@ -806,18 +811,48 @@ function MonitorPage({ state, setState, setTab }){
         </div>
       </div>
 
-      {/* Main area: LEFT legend • CENTER board • RIGHT controls */}
-      <div className="mt-4 grid grid-cols-1 lg:grid-cols-[200px_minmax(0,1fr)_220px] gap-4 items-start">
-        {/* Left fixed legend */}
-        <div className="rounded-3xl bg-white p-4 shadow-sm border">
-          <h3 className="font-semibold mb-2">Legend</h3>
-          <Legend />
+      {/* Main area: LEFT legend + controls • CENTER board */}
+      <div className="mt-4 grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-4 items-start">
+        {/* Left legend + controls */}
+        <div className="rounded-3xl bg-white p-4 shadow-sm border space-y-4">
+          <div>
+            <h3 className="font-semibold mb-2">Legend</h3>
+            <Legend />
+          </div>
+          <div>
+            <h3 className="font-semibold mb-2">Controls</h3>
+            <div className="space-y-3">
+              <div>
+                <div className="text-sm font-medium mb-1">Seat Mode</div>
+                <button onClick={()=>{ setMoveMode(!moveMode); }} className={`w-full inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-sm ${moveMode?"bg-blue-50 border-blue-300":"hover:bg-slate-50"}`}>
+                  <Move3D className="h-4 w-4" /> {moveMode? "Move Seats: ON":"Move Seats"}
+                </button>
+                <button onClick={()=> setState(p=> ({ ...p, editAssignMode: !p.editAssignMode }))} className={`mt-2 w-full inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-sm ${state.editAssignMode? "bg-emerald-50 border-emerald-300":"hover:bg-slate-50"}`}>
+                  Edit Seat Assignment: {state.editAssignMode? "ON":"OFF"}
+                </button>
+              </div>
+              <div>
+                <div className="text-sm font-medium mb-1">Layout</div>
+                <div className="flex items-center gap-2">
+                  <button onClick={()=> setLayoutMode('grid')} className={`flex-1 rounded-xl border px-3 py-2 text-sm ${currentClass.layoutMode==='grid' ? "bg-slate-100" : "hover:bg-slate-50"}`}>Grid</button>
+                  <button onClick={()=> setLayoutMode('free')} className={`flex-1 rounded-xl border px-3 py-2 text-sm ${currentClass.layoutMode==='free' ? "bg-slate-100" : "hover:bg-slate-50"}`}>Free</button>
+                </div>
+              </div>
+              <GridSizeControl state={state} setState={setState} />
+            </div>
+          </div>
         </div>
 
         {/* Center board */}
         <div className="rounded-3xl bg-white p-4 shadow-sm border">
           {currentClass.layoutMode === "grid" ? (
-            <GridBoard currentClass={currentClass} getLevel={getLevel} onSeatClickGrid={onSeatClickGrid} studentName={studentName} />
+            <GridBoard
+              currentClass={currentClass}
+              getLevel={getLevel}
+              onSeatClickGrid={onSeatClickGrid}
+              studentName={studentName}
+              openStudent={openStudent}
+            />
           ) : (
             <FreeBoard
               currentClass={currentClass}
@@ -830,31 +865,9 @@ function MonitorPage({ state, setState, setTab }){
               editAssignMode={state.editAssignMode}
               openAssignModal={openAssignModal}
               cycleSeatLevel={cycleSeatLevel}
+              openStudent={openStudent}
             />
           )}
-        </div>
-
-        {/* Right controls */}
-        <div className="rounded-3xl bg-white p-4 shadow-sm border">
-          <h3 className="font-semibold mb-3">Controls</h3>
-          <div className="space-y-3">
-            <div>
-              <div className="text-sm font-medium mb-1">Seat Mode</div>
-              <button onClick={()=>{ setMoveMode(!moveMode); }} className={`w-full inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-sm ${moveMode?"bg-blue-50 border-blue-300":"hover:bg-slate-50"}`}>
-                <Move3D className="h-4 w-4" /> {moveMode? "Move Seats: ON":"Move Seats"}
-              </button>
-              <button onClick={()=> setState(p=> ({ ...p, editAssignMode: !p.editAssignMode }))} className={`mt-2 w-full inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-sm ${state.editAssignMode? "bg-emerald-50 border-emerald-300":"hover:bg-slate-50"}`}>
-                Edit Seat Assignment: {state.editAssignMode? "ON":"OFF"}
-              </button>
-            </div>
-            <div>
-              <div className="text-sm font-medium mb-1">Layout</div>
-              <div className="flex items-center gap-2">
-                <button onClick={()=> setLayoutMode('grid')} className={`flex-1 rounded-xl border px-3 py-2 text-sm ${currentClass.layoutMode==='grid' ? "bg-slate-100" : "hover:bg-slate-50"}`}>Grid</button>
-                <button onClick={()=> setLayoutMode('free')} className={`flex-1 rounded-xl border px-3 py-2 text-sm ${currentClass.layoutMode==='free' ? "bg-slate-100" : "hover:bg-slate-50"}`}>Free</button>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -907,8 +920,34 @@ function MonitorPage({ state, setState, setTab }){
   );
 }
 
+function GridSizeControl({ state, setState }){
+  const cl = state.classes.find(c=> c.id===state.selectedClassId);
+  const [rows, setRows] = useState(cl.rows);
+  const [cols, setCols] = useState(cl.cols);
+  useEffect(()=> { setRows(cl.rows); setCols(cl.cols); }, [cl.rows, cl.cols]);
+
+  const applySize = ()=> setState(p=>{
+    const next={...p}; const idx=next.classes.findIndex(c=> c.id===p.selectedClassId); if(idx<0) return p;
+    const cls={...next.classes[idx]}; const seats=[];
+    for(let r=0;r<rows;r++){ for(let c=0;c<cols;c++){ const ex=cls.seats.find(s=> s.r===r && s.c===c); seats.push(ex?ex:{ r, c, studentId:null }); } }
+    cls.rows=rows; cls.cols=cols; cls.seats=seats; next.classes[idx]=cls; return next;
+  });
+
+  return (
+    <div>
+      <div className="text-sm font-medium mb-1">Grid Size</div>
+      <div className="flex items-center gap-2">
+        <input type="number" min={1} max={24} value={rows} onChange={(e)=> setRows(parseInt(e.target.value||"1"))} className="w-20 rounded-xl border px-2 py-1 text-sm" />
+        <span className="text-sm text-gray-600">×</span>
+        <input type="number" min={1} max={24} value={cols} onChange={(e)=> setCols(parseInt(e.target.value||"1"))} className="w-20 rounded-xl border px-2 py-1 text-sm" />
+        <button onClick={applySize} className="rounded-xl border px-3 py-1 text-sm hover:bg-slate-50">Apply</button>
+      </div>
+    </div>
+  );
+}
+
 /* ---- Boards ---- */
-function GridBoard({ currentClass, getLevel, onSeatClickGrid, studentName }){
+function GridBoard({ currentClass, getLevel, onSeatClickGrid, studentName, openStudent }){
   return (
     <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${currentClass.cols}, minmax(0, 1fr))` }}>
       {Array.from({ length: currentClass.rows * currentClass.cols }, (_, idx) => {
@@ -920,9 +959,9 @@ function GridBoard({ currentClass, getLevel, onSeatClickGrid, studentName }){
         const name = studentName(seat.studentId);
         let dragFlag = false;
         return (
-          <button
+          <div
             key={`${r}-${c}`}
-            className={`relative rounded-2xl p-3 h-20 ring-2 ${meta.ring} ${meta.bg} transition focus:outline-none hover:brightness-95`}
+            className={`relative rounded-2xl h-20 ring-2 ${meta.ring} ${meta.bg} transition`}
             onPointerDown={()=>{ dragFlag = false; }}
             onPointerMove={()=>{ dragFlag = true; }}
             onPointerUp={()=> onSeatClickGrid(seat, dragFlag)}
@@ -930,19 +969,33 @@ function GridBoard({ currentClass, getLevel, onSeatClickGrid, studentName }){
             onContextMenu={(e)=> e.preventDefault()}
             title={seat.studentId ? "Tap to cycle level" : "Turn on Edit Seat Assignment to set student"}
           >
-            <div className={`text-sm font-semibold ${meta.text} line-clamp-2 pr-6`}>{name || "(empty)"}</div>
-            <div className="absolute bottom-2 right-2 text-[10px] text-gray-500">{meta.name}</div>
-          </button>
+            {/* Student quick-view icon (does NOT bubble) */}
+            {seat.studentId && (
+              <button
+                className="absolute top-1 left-1 p-1 rounded-md bg-white/70 hover:bg-white"
+                onClick={(e)=> { e.stopPropagation(); openStudent(seat.studentId); }}
+                title="Open student detail"
+              >
+                <UserIcon className="h-3.5 w-3.5 text-slate-700" />
+              </button>
+            )}
+            {/* Centered name */}
+            <div className={`absolute inset-0 flex items-center justify-center px-3 text-sm font-semibold ${meta.text} text-center leading-tight`}>
+              {name || ""}
+            </div>
+            {/* Level label */}
+            <div className="absolute bottom-1 right-2 text-[10px] text-gray-600">{meta.name}</div>
+          </div>
         );
       })}
     </div>
   );
 }
 
-function FreeBoard({ currentClass, getLevel, studentName, onPointerDownSeat, onPointerMoveBoard, onPointerUpBoard, dragMoved, editAssignMode, openAssignModal, cycleSeatLevel }){
+function FreeBoard({ currentClass, getLevel, studentName, onPointerDownSeat, onPointerMoveBoard, onPointerUpBoard, dragMoved, editAssignMode, openAssignModal, cycleSeatLevel, openStudent }){
   const boardRef = useRef(null);
   return (
-    <div ref={boardRef} onPointerMove={onPointerMoveBoard} onPointerUp={onPointerUpBoard} className="relative w-full border rounded-2xl" style={{ height: 420 }}>
+    <div ref={boardRef} onPointerMove={onPointerMoveBoard} onPointerUp={onPointerUpBoard} className="relative w-full border rounded-2xl" style={{ height: 460 }}>
       {currentClass.seats.map(s=>{
         const x = typeof s.x==="number" ? s.x : (s.c+0.5)/currentClass.cols;
         const y = typeof s.y==="number" ? s.y : (s.r+0.5)/currentClass.rows;
@@ -951,9 +1004,9 @@ function FreeBoard({ currentClass, getLevel, studentName, onPointerDownSeat, onP
         const name = studentName(s.studentId);
         let movedHere = false;
         return (
-          <button
+          <div
             key={`${s.r}-${s.c}`}
-            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-2xl p-3 h-20 w-36 ring-2 ${meta.ring} ${meta.bg} transition focus:outline-none hover:brightness-95`}
+            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-2xl h-20 w-40 ring-2 ${meta.ring} ${meta.bg} transition`}
             style={{ left: `${x*100}%`, top: `${y*100}%` }}
             onPointerDown={(e)=> onPointerDownSeat(e, s)}
             onPointerMove={()=>{ movedHere = true; }}
@@ -966,11 +1019,93 @@ function FreeBoard({ currentClass, getLevel, studentName, onPointerDownSeat, onP
             onContextMenu={(e)=> e.preventDefault()}
             title={s.studentId ? "Tap to cycle level" : "Turn on Edit Seat Assignment to set student"}
           >
-            <div className={`text-sm font-semibold ${meta.text} line-clamp-2 pr-6`}>{name || "(empty)"}</div>
-            <div className="absolute bottom-2 right-2 text-[10px] text-gray-500">{meta.name}</div>
-          </button>
+            {s.studentId && (
+              <button
+                className="absolute top-1 left-1 p-1 rounded-md bg-white/70 hover:bg-white"
+                onClick={(e)=> { e.stopPropagation(); openStudent(s.studentId); }}
+                title="Open student detail"
+              >
+                <UserIcon className="h-3.5 w-3.5 text-slate-700" />
+              </button>
+            )}
+            <div className={`absolute inset-0 flex items-center justify-center px-3 text-sm font-semibold ${meta.text} text-center leading-tight`}>
+              {name || ""}
+            </div>
+            <div className="absolute bottom-1 right-2 text-[10px] text-gray-600">{meta.name}</div>
+          </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ========================== Student Detail Page ========================== */
+function StudentPage({ state, setState, setTab }){
+  const cl = state.classes.find(c=> c.id===state.selectedClassId);
+  if (!cl || !state.selectedStudentId) return null;
+  const student = cl.students.find(s=> s.id===state.selectedStudentId);
+  const classSkills = state.skills.filter(s=> s.classIds.includes(cl.id));
+
+  // Group skills by domain, sort domains & skills alphabetically
+  const groups = {};
+  classSkills.forEach(sk=>{
+    const dom = sk.domain || "(No Domain)";
+    if (!groups[dom]) groups[dom] = [];
+    groups[dom].push(sk);
+  });
+  const domains = Object.keys(groups).sort((a,b)=> a.localeCompare(b));
+  domains.forEach(d=> groups[d].sort((a,b)=> a.name.localeCompare(b.name)));
+
+  const getLevel = (skillId)=>{
+    const lv = cl.marks?.[skillId]?.[student.id];
+    return (typeof lv === "number" ? lv : 0);
+  };
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 pb-10">
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={()=> setState(p=> ({ ...p, tab: "monitor" }))} className="rounded-xl border px-3 py-2 bg-white hover:bg-slate-50">← Back to Monitor</button>
+        <Badge>Class: {cl.name}</Badge>
+      </div>
+
+      <div className="rounded-3xl bg-white p-4 shadow-sm border">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="h-10 w-10 rounded-xl bg-slate-100 grid place-items-center"><UserIcon className="h-5 w-5 text-slate-600" /></div>
+          <div>
+            <h2 className="text-xl font-bold">{student?.name || "Student"}</h2>
+            <p className="text-xs text-slate-500">All skills linked to this class (colored by current level)</p>
+          </div>
+        </div>
+
+        {domains.length === 0 ? (
+          <div className="text-sm text-slate-500">No skills have been set up for this class yet.</div>
+        ) : (
+          <div className="space-y-6">
+            {domains.map(dom=> (
+              <div key={dom}>
+                <h3 className="text-sm font-semibold text-slate-700 mb-2">{dom}</h3>
+                <div className="flex flex-col gap-2">
+                  {groups[dom].map(sk=>{
+                    const lv = getLevel(sk.id);
+                    const meta = levelMeta[lv];
+                    return (
+                      <div key={sk.id} className={`rounded-xl px-3 py-2 ring-1 ${meta.ring} ${meta.bg}`}>
+                        <div className="text-sm font-medium">{sk.name}</div>
+                        <div className="text-xs text-slate-600 space-x-2">
+                          {sk.standardCode && <span>Std: {sk.standardCode}</span>}
+                          {sk.description && <span>{sk.description}</span>}
+                          <span className="text-slate-500">•</span>
+                          <span className="text-slate-700">Level: {meta.name}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
