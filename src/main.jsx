@@ -2,8 +2,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 
-// ⬇️ comment App out for now to avoid any App-level crashes masking the mount
-// import App from "./App.jsx";
+⬇️ comment App out for now to avoid any App-level crashes masking the mount
+import App from "./App.jsx";
 
 const root = createRoot(document.getElementById("root"));
 root.render(
