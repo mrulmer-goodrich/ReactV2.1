@@ -343,36 +343,42 @@ const [remoteChecked, setRemoteChecked] = useState(false);
   
 
   // Load from KV on startup
-  useEffect(() => {
-    async function load() {
-      try {
-        const r = await fetch("/api/load");
-        const { data } = await r.json();
-        if (data && typeof data === "object") {
-          setState(migrateLegacy(data));
+useEffect(() => {
+  let alive = true;
+  (async () => {
+    try {
+      const r = await fetch("/api/load");
+      if (alive) setKvAvailable(r.ok);
+      if (r.ok) {
+        const j = await r.json().catch(() => ({}));
+        if (alive && j && j.data && typeof j.data === "object") {
+          setState(j.data); // use server data when present
         }
-      } catch (e) {
-        console.error("KV load failed", e);
       }
+    } catch {
+      if (alive) setKvAvailable(false);
+    } finally {
+      if (alive) setRemoteChecked(true); // ✅ we looked at the server (even if empty)
     }
-    load();
-  }, []);
+  })();
+  return () => { alive = false; };
+}, []);
 
   // Auto-save to KV on every change
-  useEffect(() => {
-    async function save() {
-      try {
-        await fetch("/api/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: state }),
-        });
-      } catch (e) {
-        console.error("KV save failed", e);
-      }
-    }
-    if (state) save();
-  }, [state]);
+useEffect(() => {
+  if (!kvAvailable) return;        // need KV up
+  if (!remoteChecked) return;      // ✅ don't push until after server check
+  if (!isMeaningful(state)) return;// ✅ never push blank/default
+  (async () => {
+    try {
+      await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: state }),
+      });
+    } catch {}
+  })();
+}, [state, kvAvailable, remoteChecked]);
 
   // Local backup
   useEffect(() => { saveState(state); }, [state]);
