@@ -5,6 +5,23 @@ import {
   ListChecks, GraduationCap, Trash2, Wrench
 } from "lucide-react";
 
+// Use this exact key everywhere (App + /api)
+const lsKey = "seating-monitor-v7-1";
+
+// Only save if there's real content (prevents wiping KV with blanks)
+const isMeaningful = (s) => {
+  try {
+    const cls = s?.classes || [];
+    const anyStudents = cls.some(c => (c.students || []).length > 0);
+    const anySkills = (s?.skills || []).length > 0;
+    const anyMarks = cls.some(c => c.marks && Object.keys(c.marks).length > 0);
+    return anyStudents || anySkills || anyMarks;
+  } catch {
+    return false;
+  }
+};
+
+// One-tap push to the cloud (works on phone/iPad/laptop)
 function SaveToCloud({ state }) {
   const run = async () => {
     try {
@@ -14,7 +31,7 @@ function SaveToCloud({ state }) {
         body: JSON.stringify({ data: state }),
       });
       alert(`Cloud save: ${r.status}`); // expect 200
-    } catch (e) {
+    } catch {
       alert("Cloud save failed. Are you on the production URL?");
     }
   };
@@ -320,7 +337,10 @@ function TopImport({ onImport }){
 /* ---------- App Shell ---------- */
 export default function App(){
   const [state, setState] = useState(loadState());
+  const [kvAvailable, setKvAvailable] = useState(false);
+const [remoteChecked, setRemoteChecked] = useState(false);
   const setTab = (tab)=> setState(p=> ({ ...p, tab }));
+  
 
   // Load from KV on startup
   useEffect(() => {
