@@ -46,6 +46,31 @@ function SaveToCloud({ state }) {
 }
 
 
+// One-tap push to the cloud (works on phone/iPad/laptop)
+function SaveToCloud({ state }) {
+  const run = async () => {
+    try {
+      const r = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: state }),
+      });
+      alert(`Cloud save: ${r.status}`); // expect 200
+    } catch {
+      alert("Cloud save failed. Are you on the production URL?");
+    }
+  };
+  return (
+    <button
+      onClick={run}
+      className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 shadow-sm bg-white hover:bg-slate-50 border"
+    >
+      Save to Cloud
+    </button>
+  );
+}
+
+
 /**
  * Academic Monitoring — v7.1 (Clean Single-File App.jsx)
  * - Fixes duplicate React hook imports
@@ -335,86 +360,75 @@ function TopImport({ onImport }){
 }
 
 /* ---------- App Shell ---------- */
-export default function App(){
-  const [state, setState] = useState(loadState());
-  const [kvAvailable, setKvAvailable] = useState(false);
-const [remoteChecked, setRemoteChecked] = useState(false);
-  const setTab = (tab)=> setState(p=> ({ ...p, tab }));
-  
-
-  // Load from KV on startup
-useEffect(() => {
-  let alive = true;
-  (async () => {
-    try {
-      const r = await fetch("/api/load");
-      if (alive) setKvAvailable(r.ok);
-      if (r.ok) {
-        const j = await r.json().catch(() => ({}));
-        if (alive && j && j.data && typeof j.data === "object") {
-          setState(j.data); // use server data when present
-        }
+ export default function App(){
+  // ⬇️ keep your existing initial state line if you have one, otherwise use this:
+  const [state, setState] = useState(
+    (() => {
+      try {
+        const raw = localStorage.getItem(lsKey);
+        return raw ? JSON.parse(raw) : {
+          classes: [],
+          skills: [],
+          selectedClassId: null,
+          selectedSkillId: null,
+          editAssignMode: false,
+          tab: "home",
+          selectedStudentId: null,
+        };
+      } catch {
+        return { classes: [], skills: [], tab: "home" };
       }
-    } catch {
-      if (alive) setKvAvailable(false);
-    } finally {
-      if (alive) setRemoteChecked(true); // ✅ we looked at the server (even if empty)
-    }
-  })();
-  return () => { alive = false; };
-}, []);
-
-  // Auto-save to KV on every change
-useEffect(() => {
-  if (!kvAvailable) return;        // need KV up
-  if (!remoteChecked) return;      // ✅ don't push until after server check
-  if (!isMeaningful(state)) return;// ✅ never push blank/default
-  (async () => {
-    try {
-      await fetch("/api/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: state }),
-      });
-    } catch {}
-  })();
-}, [state, kvAvailable, remoteChecked]);
-
-  // Local backup
-  useEffect(() => { saveState(state); }, [state]);
-
-  const notReady = !state || !Array.isArray(state.classes);
-
-  return (
-    <ErrorBoundary>
-      <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 to-slate-100">
-        {notReady ? (
-          <div className="p-6 text-sm text-gray-600">Loading…</div>
-        ) : (
-          <>
-            {/* Top bar */}
-            <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
-              <button onClick={()=> setTab("home")} className="flex items-center gap-3 group">
-                <HomeIcon className="h-6 w-6 text-slate-400 group-hover:text-slate-600 transition" />
-                <h1 className="text-2xl font-bold group-hover:text-slate-700 transition">Academic Monitoring</h1>
-              </button>
-              <div className="flex items-center gap-2">
-                <TopExport state={state} />
-                <TopImport onImport={(obj)=> setState(migrateLegacy(obj))} />
-              </div>
-            </div>
-
-            {/* Pages */}
-            {state.tab==="home" && <Home setTab={setTab} />}
-            {state.tab==="setup" && <SetupPage state={state} setState={setState} setTab={setTab} />}
-            {state.tab==="monitor" && <MonitorPage state={state} setState={setState} setTab={setTab} />}
-            {state.tab==="student" && <StudentPage state={state} setState={setState} setTab={setTab} />}
-          </>
-        )}
-      </div>
-    </ErrorBoundary>
+    })()
   );
-}
+
+  // NEW: cloud flags
+  const [kvAvailable, setKvAvailable] = useState(false);
+  const [remoteChecked, setRemoteChecked] = useState(false);
+
+  // Load from KV (and mark we've checked the server)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/load");
+        if (alive) setKvAvailable(r.ok);
+        if (r.ok) {
+          const j = await r.json().catch(() => ({}));
+          if (alive && j && j.data && typeof j.data === "object") {
+            setState(j.data); // use server data when present
+          }
+        }
+      } catch {
+        if (alive) setKvAvailable(false);
+      } finally {
+        if (alive) setRemoteChecked(true); // ✅ we looked at the server (even if empty)
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Auto-save to KV (guarded so blanks don't wipe cloud)
+  useEffect(() => {
+    if (!kvAvailable) return;        // need KV up
+    if (!remoteChecked) return;      // ✅ don't push until after server check
+    if (!isMeaningful(state)) return;// ✅ never push blank/default
+    (async () => {
+      try {
+        await fetch("/api/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: state }),
+        });
+      } catch {}
+    })();
+  }, [state, kvAvailable, remoteChecked]);
+
+  // Always back up locally
+  useEffect(() => {
+    try { localStorage.setItem(lsKey, JSON.stringify(state)); } catch {}
+  }, [state]);
+
+  // ⬇️ your existing return(...) stays below this line
 
 /* ========================== Home ========================== */
 function Home({ setTab }){
