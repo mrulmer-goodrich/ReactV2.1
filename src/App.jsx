@@ -27,7 +27,8 @@ function SaveToCloud({ state }) {
     </button>
   );
 }
-}
+
+
 /**
  * Academic Monitoring — v7.1 (Clean Single-File App.jsx)
  * - Fixes duplicate React hook imports
