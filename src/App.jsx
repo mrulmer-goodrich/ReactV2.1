@@ -4,7 +4,57 @@ import {
   Link as LinkIcon, SlidersHorizontal, LayoutTemplate, Home as HomeIcon,
   ListChecks, GraduationCap, Trash2, Wrench
 } from "lucide-react";
+function CloudStatus({ on, small }) {
+  return (
+    <span className={`inline-flex items-center ${small ? "text-[11px]" : "text-xs"} rounded-full border px-2 py-1 ${on ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-rose-50 border-rose-300 text-rose-700"}`}>
+      <span className={`inline-block rounded-full mr-1 ${small ? "h-2 w-2" : "h-2.5 w-2.5"} ${on ? "bg-emerald-500" : "bg-rose-500"}`}></span>
+      Cloud: {on ? "On" : "Off"}
+    </span>
+  );
+}
 
+function SyncNow({ state }) {
+  const run = async () => {
+    try {
+      const r = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: state }),
+      });
+      alert(`Sync to server: ${r.status}`);
+    } catch {
+      alert("Sync failed. Are you on the production URL?");
+    }
+  };
+  return (
+    <button onClick={run} className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 shadow-sm bg-white hover:bg-slate-50 border">
+      Sync Now
+    </button>
+  );
+}
+
+function PullNow({ setState }) {
+  const run = async () => {
+    try {
+      const r = await fetch("/api/load");
+      if (!r.ok) { alert(`Pull failed: ${r.status}`); return; }
+      const j = await r.json();
+      if (j && j.data && typeof j.data === "object") {
+        setState(j.data);
+        alert("Pulled latest from server.");
+      } else {
+        alert("Server is empty right now.");
+      }
+    } catch {
+      alert("Pull failed. Are you on the production URL?");
+    }
+  };
+  return (
+    <button onClick={run} className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 shadow-sm bg-white hover:bg-slate-50 border">
+      Pull Now
+    </button>
+  );
+}
 /**
  * Academic Monitoring — v7.1 (Clean Single-File App.jsx)
  * - Fixes duplicate React hook imports
