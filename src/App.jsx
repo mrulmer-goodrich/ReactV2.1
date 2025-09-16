@@ -1,29 +1,27 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  Download, Upload, Plus, Pencil, Users, Settings, Home as HomeIcon,
-  ListChecks, GraduationCap, Trash2, Wrench, X as XIcon, Edit3, Check, XCircle
+  Download, Upload, Plus, Pencil, Users, Home as HomeIcon,
+  ListChecks, GraduationCap, Trash2, Wrench, X as XIcon, Check, XCircle
 } from "lucide-react";
 
 /* ---------------------------------------------------------
-   Academic Monitoring — v10.0 (Finalized fixes)
-   - Levels: blank default (no badge) + Help(0), Developing(2), Proficient(3), Absent(5)
-   - No "Approaching"; map legacy 1 → 2; 4 → 3
-   - Student name centered; badge bottom-right; flags unobtrusive
-   - Legend as left flyout; header tabs inline with import/export
-   - Add Skill modal (consistent across devices), with Domain/Standard optional
-   - Skills tied to selected classes (classIds)
-   - Roster: toggle flags in-place
-   - Monitor: overlay slices left→right (up to 6), clickable to edit each skill
-   - Compare: class dropdown, equal-width columns, up to 6 skills selectable
-   - JSON normalized on load; localStorage persisted; no auto-cloud write
+   Academic Monitoring — v10.1 (Tweaks applied)
+   - Blank default (no badge) until marked
+   - Levels: Help(0), Developing(2), Proficient(3), Absent(5)
+   - Student name centered; badge bottom-right; flags along bottom-left
+   - Legend flyout hidden on Home
+   - Add Skill uses modal (consistent on Mac/PC/iPad)
+   - Skill classIds respected; edit in modal
+   - Roster: Open button to FAR LEFT; flag pills uniform; "IEP / 504" wraps
+   - Monitor: base-level colors tint whole cell; overlays left→right with dark separators; click slices to edit
+   - Monitor toolbar shows "Base Skill" and "Overlay Skills"
+   - Compare: class dropdown; equal-width columns; up to 6 skills
    --------------------------------------------------------- */
 
-// Storage key
 const lsKey = "seating-monitor-v7-1";
 
-// Default blank app state
 const blankState = {
-  tab: "Monitor", // "Home" | "Setup" | "Monitor" | "Student" | "Compare"
+  tab: "Home",
   classes: [],
   selectedClassId: null,
   skills: [],
@@ -32,7 +30,6 @@ const blankState = {
   editAssignMode: "assign"
 };
 
-// --- Grade 7 Domains/Standards map (display strips "NC.7.")
 const G7_DOMAINS = [
   { id: "",   name: "(Optional)" },
   { id: "RP", name: "Ratios & Proportions" },
@@ -43,27 +40,22 @@ const G7_DOMAINS = [
 ];
 
 const G7_STANDARDS = {
-  // RP
   "RP.1": "Compute unit rates (incl. complex fractions).",
   "RP.2": "Recognize & represent proportional relationships.",
   "RP.3": "Use percent problems incl. tax/discount/tip.",
-  // NS
   "NS.1": "Add/subtract rational numbers; number line reasoning.",
   "NS.2": "Multiply/divide rational numbers; sign rules.",
   "NS.3": "Apply operations with rational numbers to real-world problems.",
-  // EE
   "EE.1": "Use properties to add/subtract/multiply linear expressions.",
   "EE.2": "Understand that rewriting expressions reveals structure.",
   "EE.3": "Solve multi-step problems with rational numbers.",
   "EE.4": "Use variables; simplify expressions; combine like terms.",
-  // G
   "G.1":  "Scale drawings; scale factor; area/length relations.",
   "G.2":  "Draw geometric figures with given conditions.",
   "G.3":  "Describe 2D figures by angles/lines.",
   "G.4":  "Area & circumference; relate diameter/radius.",
   "G.5":  "Angle measure, area, surface area, volume problems.",
   "G.6":  "Solve real-world problems involving area/volume.",
-  // SP
   "SP.1": "Sampling to draw inferences.",
   "SP.2": "Compare populations with center/variability.",
   "SP.3": "Chance processes; approximate probabilities.",
@@ -75,7 +67,6 @@ function prettyStandard(stdCode) {
   return String(stdCode).replace(/^NC\.7\./i, "");
 }
 
-// --- Levels (no 'Approaching'). valid: 0,2,3,5; and 'null' means blank/NA ---
 const LEVELS = {
   0: { name: "Help",        bg: "bg-rose-100",    ring: "ring-rose-300",    text: "text-rose-800" },
   2: { name: "Developing",  bg: "bg-amber-100",   ring: "ring-amber-300",   text: "text-amber-800" },
@@ -84,37 +75,21 @@ const LEVELS = {
 };
 const validLevels = [0,2,3,5];
 
-// Flags
 const FLAG_META = {
   ml:      { label: "ML",      dot: "bg-sky-500" },
   mlNew:   { label: "ML New",  dot: "bg-indigo-500" },
-  iep504:  { label: "IEP/504", dot: "bg-purple-500" },
+  iep504:  { label: "IEP / 504",  dot: "bg-purple-500" }, // spaced for wrapping
   ec:      { label: "EC",      dot: "bg-orange-500" },
   bubble:  { label: "Bubble",  dot: "bg-rose-500" },
 };
 const flagKeys = Object.keys(FLAG_META);
 
-// Safety: meaningful state?
-const isMeaningful = (s) => {
-  try {
-    const cls = s?.classes || [];
-    const anyStudents = cls.some(c => (c.students || []).length > 0);
-    const anySkills = (s?.skills || []).length > 0;
-    const anyMarks = cls.some(c => c.marks && Object.keys(c.marks).length > 0);
-    return anyStudents || anySkills || anyMarks;
-  } catch {
-    return false;
-  }
-};
-
-// Normalize imported/loaded state
 function normalizeState(input) {
   const s = JSON.parse(JSON.stringify(input || {}));
   if (!Array.isArray(s.classes)) s.classes = [];
   if (!Array.isArray(s.skills)) s.skills = [];
-  if (!("tab" in s)) s.tab = "Monitor";
+  if (!s.tab) s.tab = "Home";
 
-  // Ensure each class has shape
   s.classes = s.classes.map((c, idx) => ({
     id: c.id || `class-${idx}`,
     name: c.name || `Block ${idx+1}`,
@@ -126,7 +101,6 @@ function normalizeState(input) {
     marks: c.marks || {},
   }));
 
-  // Map legacy marks: skillId->{studentId:level} -> "studentId:skillId": level
   s.classes.forEach(cls => {
     const marks = cls.marks || {};
     let flattened = {};
@@ -136,15 +110,14 @@ function normalizeState(input) {
         if (!byStudent || typeof byStudent !== "object") return;
         Object.entries(byStudent).forEach(([studentId, lv]) => {
           let level = Number(lv);
-          if (level === 1) level = 2; // Approaching -> Developing
-          if (level === 4) level = 3; // Advanced -> Proficient
+          if (level === 1) level = 2;
+          if (level === 4) level = 3;
           if (!validLevels.includes(level)) return;
           flattened[`${studentId}:${skillId}`] = level;
         });
       });
       cls.marks = flattened;
     } else {
-      // map 1->2, 4->3 if any
       Object.entries(marks).forEach(([k, v]) => {
         let level = Number(v);
         if (level === 1) level = 2;
@@ -155,29 +128,22 @@ function normalizeState(input) {
     }
   });
 
-  // Default selections
   if (!s.selectedClassId && s.classes[0]) s.selectedClassId = s.classes[0].id;
   if (!s.selectedSkillId && s.skills[0]) s.selectedSkillId = s.skills[0].id;
 
-  // Skills: keep Domain/Standard OPTIONAL; preserve classIds
   s.skills = s.skills.map(sk => ({
     id: sk.id || cryptoRandomId(),
     name: sk.name || "Untitled Skill",
     domain: sk.domain ?? null,
     standard: sk.standard ? prettyStandard(sk.standard) : (sk.std ? prettyStandard(sk.std) : null),
-    classIds: Array.isArray(sk.classIds) ? sk.classIds : (s.classes.map(c => c.id)) // fallback: all classes
+    classIds: Array.isArray(sk.classIds) ? sk.classIds : (s.classes.map(c => c.id))
   }));
 
   return s;
 }
 
-// Random id
-function cryptoRandomId() {
-  return Math.random().toString(36).slice(2,10);
-}
-
-// Helpers
-function clsx(...arr){ return arr.filter(Boolean).join(" "); }
+function cryptoRandomId(){ return Math.random().toString(36).slice(2,10); }
+function clsx(...a){ return a.filter(Boolean).join(" "); }
 function Tiny({children}){ return <span className="text-[12px] text-slate-500">{children}</span>; }
 function Dot({className}){ return <span className={clsx("inline-block w-2 h-2 rounded-full", className)} />; }
 
@@ -213,7 +179,6 @@ function Pill({active, onClick, children}){
   );
 }
 
-// Basic modal
 function Modal({open, title, children, onClose}){
   if (!open) return null;
   return (
@@ -230,7 +195,6 @@ function Modal({open, title, children, onClose}){
   );
 }
 
-// Legend as flyout
 function LegendFlyout({open, onClose}){
   return (
     <div className={clsx(
@@ -267,9 +231,7 @@ function LegendFlyout({open, onClose}){
   );
 }
 
-// ---------- Seat & Grid ----------
-
-// Determine level or null for (student, skill)
+// ---------- Seat helpers ----------
 function getLevel(marks, studentId, skillId){
   if (!marks) return null;
   const v = marks[`${studentId}:${skillId}`];
@@ -279,80 +241,69 @@ function getLevel(marks, studentId, skillId){
   if (num === 4) return 3;
   return validLevels.includes(num) ? num : null;
 }
-
-// Compute next level for cycle including 'null' (blank)
 function nextLevel(curr){
-  const order = [null, 0, 2, 3, 5]; // blank → Help → Developing → Proficient → Absent → blank
+  const order = [null, 0, 2, 3, 5];
   const idx = order.indexOf(curr);
   return order[(idx + 1) % order.length];
 }
-
-// Overlay color (soft) for a level
 function overlayColor(lv){
   switch (lv) {
-    case 0: return "rgba(244, 114, 182, 0.22)"; // rose-ish soft
-    case 2: return "rgba(251, 191, 36, 0.22)";  // amber-ish soft
-    case 3: return "rgba(16, 185, 129, 0.22)";  // emerald-ish soft
-    case 5: return "rgba(107, 114, 128, 0.22)"; // gray soft
+    case 0: return "rgba(244, 114, 182, 0.24)";
+    case 2: return "rgba(251, 191, 36, 0.24)";
+    case 3: return "rgba(16, 185, 129, 0.24)";
+    case 5: return "rgba(107, 114, 128, 0.24)";
     default: return "transparent";
   }
 }
 
-// Seat box
-function Seat({student, baseLevel, flags, absent, badgeText, slices, onSliceClick, onSeatClick}){
+function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick}){
   const isAbsent = baseLevel === 5;
+  const bgClass = isAbsent
+    ? "bg-gray-100 border-gray-300"
+    : (baseLevel!=null ? `${LEVELS[baseLevel].bg} border-slate-300` : "bg-white border-slate-300 hover:shadow-sm");
+
   return (
     <div
-      className={clsx(
-        "relative rounded-xl border min-h-[72px] cursor-pointer select-none",
-        isAbsent ? "bg-gray-100 border-gray-300" : "bg-white border-slate-300 hover:shadow-sm"
-      )}
+      className={clsx("relative rounded-xl border min-h-[78px] cursor-pointer select-none", bgClass)}
       onClick={slices && slices.length ? undefined : onSeatClick}
     >
-      {/* Overlay slices (left→right) */}
+      {/* Overlay slices left→right with dark separators */}
       {slices && slices.length > 0 && (
         <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-auto flex">
           {slices.map((sl, idx) => (
             <div
               key={idx}
-              className="h-full"
+              className="h-full relative"
               style={{ width: `${100 / slices.length}%`, background: overlayColor(sl.level) }}
               onClick={(e)=>{ e.stopPropagation(); onSliceClick?.(idx); }}
               title={sl.title}
-            />
+            >
+              {idx < slices.length - 1 && (<div className="absolute right-0 top-0 h-full w-[2px] bg-black/40" />)}
+            </div>
           ))}
         </div>
       )}
-
-      {/* Absent X overlay (for baseLevel only) */}
+      {/* Absent X overlay */}
       {isAbsent && (
         <div className="absolute inset-0 pointer-events-none opacity-70">
-          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-400 rotate-45"></div>
-          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-400 -rotate-45"></div>
+          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 rotate-45"></div>
+          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 -rotate-45"></div>
         </div>
       )}
-
       {/* Content layer */}
       <div className="relative p-2 h-full">
-        {/* Centered name */}
         <div className="absolute inset-0 flex items-center justify-center px-2">
           <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
             {student?.name || "—"}
           </div>
         </div>
-
-        {/* Flags along bottom-left */}
         <div className="absolute left-2 bottom-2 flex gap-1 flex-wrap max-w-[70%]">
-          {flagKeys.filter(k => flags?.[k]).map(k => (
-            <Dot key={k} className={FLAG_META[k].dot} />
-          ))}
+          {flagKeys.filter(k => flags?.[k]).map(k => <Dot key={k} className={FLAG_META[k].dot} />)}
         </div>
-
-        {/* Badge bottom-right only if has level */}
-        {badgeText && (
+        {baseLevel!=null && (
           <div className={clsx("absolute right-2 bottom-2 px-2 py-0.5 rounded-full text-[10px] ring-1",
             LEVELS[baseLevel].ring, LEVELS[baseLevel].bg, LEVELS[baseLevel].text)}>
-            {badgeText}
+            {LEVELS[baseLevel].name}
           </div>
         )}
       </div>
@@ -360,48 +311,26 @@ function Seat({student, baseLevel, flags, absent, badgeText, slices, onSliceClic
   );
 }
 
-// Seat grid
-function SeatGrid({
-  cls, marks, studentById,
-  baseSkillId, overlaySkillIds,
-  onCycleBase, onCycleOverlay
-}){
+function SeatGrid({cls, marks, studentById, baseSkillId, overlaySkillIds, onCycleBase, onCycleOverlay}){
   const rows = cls.rows || 4, cols = cls.cols || 9;
   const grid = Array.from({length: rows}).map((_,r)=> Array.from({length: cols}).map((__,c)=> cls.seats.find(s => s.r===r && s.c===c) || {r,c,studentId:null}));
-
   return (
     <div className="grid gap-2" style={{gridTemplateColumns: `repeat(${cols}, minmax(110px, 1fr))`}}>
       {grid.flat().map((seat, i) => {
-        const student = studentById(seat.studentId);
-        const baseLevel = (student && baseSkillId) ? getLevel(marks, student.id, baseSkillId) : null;
-        const badgeText = baseLevel != null ? LEVELS[baseLevel].name : null;
-
-        // Build overlay slices (left→right) for up to 6 skills
-        const slices = (student && overlaySkillIds && overlaySkillIds.length)
-          ? overlaySkillIds.map(sid => ({
-              skillId: sid,
-              level: getLevel(marks, student.id, sid),
-              title: "Click to cycle"
-            }))
+        const st = studentById(seat.studentId);
+        const baseLevel = (st && baseSkillId) ? getLevel(marks, st.id, baseSkillId) : null;
+        const slices = (st && overlaySkillIds && overlaySkillIds.length)
+          ? overlaySkillIds.map(sid => ({ skillId: sid, level: getLevel(marks, st.id, sid), title: "Click to cycle" }))
           : [];
-
         return (
           <Seat
             key={i}
-            student={student}
+            student={st}
             baseLevel={baseLevel}
-            flags={student?.flags}
-            badgeText={badgeText}
+            flags={st?.flags}
             slices={slices}
-            onSeatClick={()=>{
-              if (student && baseSkillId) onCycleBase(student.id, baseSkillId, baseLevel);
-            }}
-            onSliceClick={(sliceIdx)=>{
-              if (!student) return;
-              const sid = overlaySkillIds[sliceIdx];
-              const curr = getLevel(marks, student.id, sid);
-              onCycleOverlay(student.id, sid, curr);
-            }}
+            onSeatClick={()=>{ if (st && baseSkillId) onCycleBase(st.id, baseSkillId, baseLevel); }}
+            onSliceClick={(sliceIdx)=>{ if (!st) return; const sid = overlaySkillIds[sliceIdx]; const curr = getLevel(marks, st.id, sid); onCycleOverlay(st.id, sid, curr); }}
           />
         );
       })}
@@ -409,15 +338,13 @@ function SeatGrid({
   );
 }
 
-// Student detail card
 function StudentCard({student, cls, skills, marks}){
   const grouped = useMemo(() => {
     const byStd = {};
     skills.forEach(sk => {
       const std = prettyStandard(sk.standard) || "—";
-      const key = `${std}`;
-      if (!byStd[key]) byStd[key] = [];
-      byStd[key].push(sk);
+      if (!byStd[std]) byStd[std] = [];
+      byStd[std].push(sk);
     });
     return byStd;
   }, [skills]);
@@ -474,25 +401,21 @@ function StudentCard({student, cls, skills, marks}){
   );
 }
 
-// Compare table (up to 6 skills)
 function CompareTable({cls, skills, marks}){
-  const [selected, setSelected] = useState([]); // array of skill ids (max 6)
-  const [sortKey, setSortKey] = useState("name"); // "name" or skillId
+  const [selected, setSelected] = useState([]);
+  const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
 
   const toggleSel = (id) => {
     setSelected((arr) => {
       if (arr.includes(id)) return arr.filter(x => x !== id);
-      if (arr.length >= 6) return [...arr]; // cap at 6
+      if (arr.length >= 6) return [...arr];
       return [...arr, id];
     });
   };
 
   const rows = (cls?.students || []).map(st => {
-    const cells = selected.map(sid => {
-      const lv = getLevel(marks, st.id, sid);
-      return { sid, lv };
-    });
+    const cells = selected.map(sid => ({ sid, lv: getLevel(marks, st.id, sid) }));
     return { st, cells };
   });
 
@@ -517,11 +440,11 @@ function CompareTable({cls, skills, marks}){
 
   const cellBg = (lv) => {
     switch (lv) {
-      case 0: return "#fecaca"; // Help
-      case 2: return "#fde68a"; // Developing
-      case 3: return "#bbf7d0"; // Proficient
-      case 5: return "#e5e7eb"; // Absent
-      default: return "#ffffff"; // blank
+      case 0: return "#fecaca";
+      case 2: return "#fde68a";
+      case 3: return "#bbf7d0";
+      case 5: return "#e5e7eb";
+      default: return "#ffffff";
     }
   };
 
@@ -548,7 +471,7 @@ function CompareTable({cls, skills, marks}){
           <table className="w-full table-fixed">
             <colgroup>
               <col style={{width:"220px"}}/>
-              {selected.map((sid,i)=>(<col key={sid} style={{width:`${Math.max(120, Math.floor((800)/selected.length))}px`}}/>))}
+              {selected.map((sid)=>(<col key={sid} style={{width:`${Math.max(120, Math.floor(800/selected.length))}px`}}/>))}
             </colgroup>
             <thead className="bg-slate-50">
               <tr>
@@ -599,11 +522,9 @@ export default function App(){
   const [state, setState] = useState(blankState);
   const [legendOpen, setLegendOpen] = useState(false);
 
-  // Modals
   const [skillModalOpen, setSkillModalOpen] = useState(false);
-  const [skillEditing, setSkillEditing] = useState(null); // skill object or null
+  const [skillEditing, setSkillEditing] = useState(null);
 
-  // Boot: load from localStorage if present
   useEffect(() => {
     try {
       const raw = localStorage.getItem(lsKey);
@@ -611,7 +532,6 @@ export default function App(){
     } catch {}
   }, []);
 
-  // Persist to localStorage
   useEffect(() => {
     try { localStorage.setItem(lsKey, JSON.stringify(state)); } catch {}
   }, [state]);
@@ -619,7 +539,6 @@ export default function App(){
   const currentClass = useMemo(() => (state.classes || []).find(c => c.id === state.selectedClassId), [state]);
   const studentById = (id) => (currentClass?.students || []).find(s => s.id === id) || null;
 
-  // Header actions
   const switchTab = (tab) => setState(s => ({...s, tab}));
   const importJSON = async (e) => {
     const file = e.target.files?.[0];
@@ -642,90 +561,53 @@ export default function App(){
     URL.revokeObjectURL(url);
   };
 
-  // Setup helpers
   const addClass = () => setState(s => {
     const id = cryptoRandomId();
     const cls = { id, name: `Block ${s.classes.length+1}`, rows:4, cols:9, layoutMode:"grid", seats:[], students:[], marks:{} };
     return {...s, classes: [...s.classes, cls], selectedClassId: id};
   });
-
   const addStudent = () => {
     const name = prompt("Student name?");
     if (!name || !currentClass) return;
-    setState(s => ({
-      ...s,
-      classes: s.classes.map(c => c.id === currentClass.id ? {
-        ...c,
-        students: [...(c.students||[]), { id: cryptoRandomId(), name, flags:{} }]
-      } : c)
-    }));
+    setState(s => ({...s, classes: s.classes.map(c => c.id === currentClass.id ? {...c, students: [...(c.students||[]), { id: cryptoRandomId(), name, flags:{} }]} : c)}));
   };
-
   const renameClass = () => {
     const name = prompt("New class name?", currentClass?.name || "");
     if (!name || !currentClass) return;
-    setState(s => ({
-      ...s,
-      classes: s.classes.map(c => c.id === currentClass.id ? {...c, name} : c)
-    }));
+    setState(s => ({...s, classes: s.classes.map(c => c.id === currentClass.id ? {...c, name} : c)}));
   };
-
   const removeStudent = (st) => {
     if (!currentClass) return;
     if (!confirm("Remove this student from the class?")) return;
-    setState(s => ({
-      ...s,
-      classes: s.classes.map(c => {
-        if (c.id !== currentClass.id) return c;
-        const students = (c.students||[]).filter(x => x.id !== st.id);
-        const marks = Object.fromEntries(Object.entries(c.marks||{}).filter(([k]) => !k.startsWith(`${st.id}:`)));
-        return {...c, students, marks};
-      })
-    }));
+    setState(s => ({...s, classes: s.classes.map(c => {
+      if (c.id !== currentClass.id) return c;
+      const students = (c.students||[]).filter(x => x.id !== st.id);
+      const marks = Object.fromEntries(Object.entries(c.marks||{}).filter(([k]) => !k.startsWith(`${st.id}:`)));
+      return {...c, students, marks};
+    })}));
   };
-
   const toggleFlag = (st, key) => {
     if (!currentClass) return;
-    setState(s => ({
-      ...s,
-      classes: s.classes.map(c => {
-        if (c.id !== currentClass.id) return c;
-        const students = (c.students||[]).map(x => {
-          if (x.id !== st.id) return x;
-          const flags = {...(x.flags || {})};
-          flags[key] = !flags[key];
-          return {...x, flags};
-        });
-        return {...c, students};
-      })
-    }));
+    setState(s => ({...s, classes: s.classes.map(c => {
+      if (c.id !== currentClass.id) return c;
+      const students = (c.students||[]).map(x => x.id===st.id ? {...x, flags: {...(x.flags||{}), [key]: !x?.flags?.[key]}} : x);
+      return {...c, students};
+    })}));
   };
-
   const openStudentDetail = (st) => setState(s => ({...s, selectedStudentId: st.id, tab: "Student"}));
 
-  // Skills modal save
   const saveSkillFromModal = (payload) => {
     setState(s => {
       if (payload.id) {
-        // edit
-        return {
-          ...s,
-          skills: s.skills.map(sk => sk.id === payload.id ? payload : sk)
-        };
+        return {...s, skills: s.skills.map(sk => sk.id === payload.id ? payload : sk)};
       } else {
-        // add
-        return {
-          ...s,
-          skills: [...s.skills, {...payload, id: cryptoRandomId()}]
-        };
+        return {...s, skills: [...s.skills, {...payload, id: cryptoRandomId()}]};
       }
     });
   };
-
   const deleteSkill = (sk) => {
     if (!confirm("Delete this skill?")) return;
-    setState(s => ({
-      ...s,
+    setState(s => ({...s,
       skills: s.skills.filter(x => x.id !== sk.id),
       classes: s.classes.map(c => {
         const marks = Object.fromEntries(Object.entries(c.marks||{}).filter(([k]) => !k.endsWith(`:${sk.id}`)));
@@ -734,35 +616,25 @@ export default function App(){
     }));
   };
 
-  // Marking logic
   const setMark = (studentId, skillId, next) => {
     if (!currentClass) return;
-    setState(s => ({
-      ...s,
-      classes: s.classes.map(c => {
-        if (c.id !== currentClass.id) return c;
-        const k = `${studentId}:${skillId}`;
-        const marks = {...(c.marks || {})};
-        if (next == null) {
-          // remove mark for blank
-          delete marks[k];
-        } else {
-          // clamp & save
-          const v = validLevels.includes(next) ? next : null;
-          if (v == null) delete marks[k]; else marks[k] = v;
-        }
-        return {...c, marks};
-      })
-    }));
+    setState(s => ({...s, classes: s.classes.map(c => {
+      if (c.id !== currentClass.id) return c;
+      const k = `${studentId}:${skillId}`;
+      const marks = {...(c.marks || {})};
+      if (next == null) delete marks[k]; else if (validLevels.includes(next)) marks[k] = next;
+      return {...c, marks};
+    })}));
   };
 
-  // Header (centered, tabs inline with import/export)
   const Header = () => (
     <div className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b">
       <div className="max-w-6xl mx-auto px-4 py-3 grid grid-cols-3 items-center">
-        <div className="justify-self-start">
-          <button className="rounded-full border px-3 py-1 text-sm" onClick={()=>setLegendOpen(true)} title="Open legend">Legend</button>
-        </div>
+        {state.tab!=="Home" ? (
+          <div className="justify-self-start">
+            <button className="rounded-full border px-3 py-1 text-sm" onClick={()=>setLegendOpen(true)} title="Open legend">Legend</button>
+          </div>
+        ) : <div />}
         <div className="justify-self-center text-center">
           <div className="text-xl font-bold">Academic Monitoring</div>
           <div className="mt-2 inline-flex items-center gap-2 rounded-full border bg-white p-1">
@@ -782,42 +654,38 @@ export default function App(){
     </div>
   );
 
-  // HOME
   const Home = () => (
     <div className="max-w-3xl mx-auto p-6 text-center">
+      <div className="mx-auto mb-4 flex items-center justify-center gap-3 text-slate-600">
+        <svg width="44" height="44" viewBox="0 0 24 24"><text x="4" y="16" fontSize="16">+</text></svg>
+        <svg width="44" height="44" viewBox="0 0 24 24"><text x="6" y="16" fontSize="16">−</text></svg>
+        <svg width="44" height="44" viewBox="0 0 24 24"><text x="6" y="16" fontSize="16">×</text></svg>
+        <svg width="44" height="44" viewBox="0 0 24 24"><text x="6" y="16" fontSize="16">÷</text></svg>
+      </div>
       <div className="text-2xl font-bold mb-2">Welcome</div>
       <p className="text-slate-600">Use <b>Setup</b> to build classes, rosters, and skills. Use <b>Monitor</b> to mark skill levels on seats. Try <b>Compare</b> to view up to six skills at once, sortable by each skill.</p>
     </div>
   );
 
-  // ADD/EDIT SKILL MODAL
   const SkillForm = ({initial, onSubmit, onCancel}) => {
     const [name, setName] = useState(initial?.name || "");
     const [domain, setDomain] = useState(initial?.domain || "");
     const [standard, setStandard] = useState(prettyStandard(initial?.standard || ""));
     const [classIds, setClassIds] = useState(initial?.classIds?.slice() || (state.classes.map(c=>c.id)));
 
-    const toggleClassId = (id) => {
-      setClassIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
-    };
+    const toggleClassId = (id) => setClassIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
 
     const submit = (e) => {
       e.preventDefault();
       if (!name.trim()) { alert("Please enter a skill name."); return; }
-      onSubmit({
-        id: initial?.id,
-        name: name.trim(),
-        domain: domain || null,
-        standard: standard ? prettyStandard(standard.trim()) : null,
-        classIds: classIds.slice()
-      });
+      onSubmit({ id: initial?.id, name: name.trim(), domain: domain || null, standard: standard ? prettyStandard(standard.trim()) : null, classIds: classIds.slice() });
     };
 
     return (
       <form onSubmit={submit} className="space-y-4">
         <div>
           <label className="text-sm text-slate-600">Skill name</label>
-          <input className="w-full border rounded-xl px-3 py-2" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g., Set up H-table" />
+          <input className="w-full border rounded-xl px-3 py-2" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g., 9/15 Set up H-table" />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -828,7 +696,7 @@ export default function App(){
           </div>
           <div>
             <label className="text-sm text-slate-600">Standard (optional)</label>
-            <input className="w-full border rounded-xl px-3 py-2" value={standard||""} onChange={e=>setStandard(e.target.value)} placeholder="e.g., NS.1 or NC.7.NS.1" />
+            <input className="w-full border rounded-xl px-3 py-2" value={standard||""} onChange={e=>setStandard(e.target.value)} placeholder="e.g., NS.1 (or NC.7.NS.1)" />
           </div>
         </div>
         <div>
@@ -837,13 +705,9 @@ export default function App(){
             {state.classes.map(c => {
               const on = classIds.includes(c.id);
               return (
-                <button
-                  type="button"
-                  key={c.id}
-                  className={clsx("px-3 py-1 rounded-full border text-sm",
-                    on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700")}
-                  onClick={()=>toggleClassId(c.id)}
-                >{c.name}</button>
+                <button type="button" key={c.id}
+                  className={clsx("px-3 py-1 rounded-full border text-sm", on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700")}
+                  onClick={()=>toggleClassId(c.id)}>{c.name}</button>
               );
             })}
           </div>
@@ -856,10 +720,8 @@ export default function App(){
     );
   };
 
-  // SETUP
   const Setup = () => (
     <div className="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {/* Classes */}
       <div className="border rounded-2xl p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="font-semibold flex items-center gap-2"><HomeIcon size={16}/>Classes</div>
@@ -870,18 +732,13 @@ export default function App(){
         </div>
         <div className="space-y-1">
           {(state.classes || []).map(c => (
-            <div
-              key={c.id}
-              className={clsx("px-3 py-2 rounded-xl border cursor-pointer", state.selectedClassId===c.id ? "bg-slate-900 text-white border-slate-900" : "bg-white")}
-              onClick={()=> setState(s => ({...s, selectedClassId: c.id}))}
-            >
+            <div key={c.id} className={clsx("px-3 py-2 rounded-xl border cursor-pointer", state.selectedClassId===c.id ? "bg-slate-900 text-white border-slate-900" : "bg-white")} onClick={()=> setState(s => ({...s, selectedClassId: c.id}))}>
               {c.name}
             </div>
           ))}
         </div>
       </div>
 
-      {/* Roster */}
       <div className="border rounded-2xl p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="font-semibold flex items-center gap-2"><Users size={16}/>Roster</div>
@@ -891,20 +748,18 @@ export default function App(){
           <div className="space-y-2 max-h-[420px] overflow-auto pr-1">
             {currentClass.students?.map(st => (
               <div key={st.id} className="flex items-center justify-between px-3 py-2 rounded-xl border">
-                <div className="flex items-center gap-3">
-                  <div className="font-medium">{st.name}</div>
-                  {/* Flag toggles */}
-                  <div className="flex gap-1">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Button icon={ListChecks} onClick={()=>openStudentDetail(st)} className="!px-2 order-1" title="Open student detail">Open</Button>
+                  <div className="font-medium order-2">{st.name}</div>
+                  <div className="flex gap-1 order-3">
                     {flagKeys.map(k => {
                       const on = !!st?.flags?.[k];
                       return (
-                        <button
-                          key={k}
-                          className={clsx("px-2 py-0.5 rounded-full border text-[11px]",
+                        <button key={k}
+                          className={clsx("px-2 py-0.5 rounded-full border text-[11px] whitespace-normal leading-tight",
                             on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700")}
                           onClick={()=>toggleFlag(st, k)}
-                          title={FLAG_META[k].label}
-                        >
+                          title={FLAG_META[k].label}>
                           {FLAG_META[k].label}
                         </button>
                       );
@@ -912,7 +767,6 @@ export default function App(){
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button icon={ListChecks} onClick={()=>openStudentDetail(st)} className="!px-2" title="Open student detail">Open</Button>
                   <Button icon={Trash2} onClick={()=>removeStudent(st)} className="!px-2">Remove</Button>
                 </div>
               </div>
@@ -921,7 +775,6 @@ export default function App(){
         ) : <Tiny>Select a class.</Tiny>}
       </div>
 
-      {/* Skills */}
       <div className="border rounded-2xl p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="font-semibold flex items-center gap-2"><Wrench size={16}/>Skills</div>
@@ -947,7 +800,6 @@ export default function App(){
         </div>
       </div>
 
-      {/* Add/Edit Skill Modal */}
       <Modal open={skillModalOpen} title={skillEditing ? "Edit Skill" : "Add Skill"} onClose={()=>setSkillModalOpen(false)}>
         <SkillForm
           initial={skillEditing}
@@ -958,29 +810,21 @@ export default function App(){
     </div>
   );
 
-  // MONITOR
   const Monitor = () => {
-    const [overlaySkillIds, setOverlaySkillIds] = useState([]); // up to 6
+    const [overlaySkillIds, setOverlaySkillIds] = useState([]);
     const cls = currentClass;
 
     useEffect(() => { setOverlaySkillIds([]); }, [cls?.id]);
 
-    // Choose skills visible to this class
     const classSkills = (state.skills || []).filter(sk => (sk.classIds?.includes(cls?.id)));
 
-    const cycleBase = (studentId, skillId, currLevel) => {
-      const nxt = nextLevel(currLevel);
-      setMark(studentId, skillId, nxt);
-    };
-    const cycleOverlay = (studentId, skillId, currLevel) => {
-      const nxt = nextLevel(currLevel);
-      setMark(studentId, skillId, nxt);
-    };
+    const cycleBase = (studentId, skillId, currLevel) => setMark(studentId, skillId, nextLevel(currLevel));
+    const cycleOverlay = (studentId, skillId, currLevel) => setMark(studentId, skillId, nextLevel(currLevel));
 
     const toggleOverlay = (id) => {
       setOverlaySkillIds(old => {
         if (old.includes(id)) return old.filter(x => x !== id);
-        if (old.length >= 6) return old; // cap at 6
+        if (old.length >= 6) return old;
         return [...old, id];
       });
     };
@@ -990,37 +834,25 @@ export default function App(){
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <div className="font-semibold">Class:</div>
-            <select
-              className="border rounded-xl px-3 py-1"
-              value={state.selectedClassId || ""}
-              onChange={e => setState(s => ({...s, selectedClassId: e.target.value}))}
-            >
+            <select className="border rounded-xl px-3 py-1" value={state.selectedClassId || ""} onChange={e => setState(s => ({...s, selectedClassId: e.target.value}))}>
               {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <div className="font-semibold">Skill:</div>
-            <select
-              className="border rounded-xl px-3 py-1"
-              value={state.selectedSkillId || ""}
-              onChange={e => setState(s => ({...s, selectedSkillId: e.target.value}))}
-            >
+            <div className="font-semibold">Base Skill:</div>
+            <select className="border rounded-xl px-3 py-1" value={state.selectedSkillId || ""} onChange={e => setState(s => ({...s, selectedSkillId: e.target.value}))}>
               {classSkills.map(sk => <option key={sk.id} value={sk.id}>{sk.name}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <div className="font-semibold">Overlays (click to edit):</div>
+            <div className="font-semibold">Overlay Skills (left→right slices):</div>
             <div className="flex gap-1 flex-wrap">
               {classSkills.map(sk => {
                 const on = overlaySkillIds.includes(sk.id);
                 return (
-                  <button
-                    key={sk.id}
-                    onClick={()=>toggleOverlay(sk.id)}
-                    className={clsx("px-2 py-1 rounded-full border text-xs",
-                      on ? "bg-slate-900 text-white border-slate-900" : "")}
-                    title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}
-                  >
+                  <button key={sk.id} onClick={()=>toggleOverlay(sk.id)}
+                    className={clsx("px-2 py-1 rounded-full border text-xs", on ? "bg-slate-900 text-white border-slate-900" : "")}
+                    title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
                     {sk.name}
                   </button>
                 );
@@ -1042,16 +874,16 @@ export default function App(){
             />
           ) : <Tiny>No class selected.</Tiny>}
         </div>
+
         {overlaySkillIds.length > 0 ? (
-          <div className="text-xs text-slate-500">Tip: Click the left/middle/right slices on a seat to change each overlay skill directly.</div>
+          <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that overlay skill. The whole seat color follows the Base Skill.</div>
         ) : (
-          <div className="text-xs text-slate-500">Tip: Click a seat to cycle the selected skill. Add “Overlays” to edit multiple skills on the same chart.</div>
+          <div className="text-xs text-slate-500">Tip: Click a seat to cycle the Base Skill level. Add overlays to edit multiple skills on one chart.</div>
         )}
       </div>
     );
   };
 
-  // STUDENT (detail)
   const Student = () => {
     const cls = currentClass;
     const st = (cls?.students || []).find(s => s.id === state.selectedStudentId) || null;
@@ -1068,16 +900,11 @@ export default function App(){
     );
   };
 
-  // COMPARE
   const Compare = () => {
     const [selectedClassId, setSelectedClassId] = useState(state.selectedClassId || state.classes[0]?.id || "");
     useEffect(()=>{
-      // keep in sync if outer changes
-      if (state.selectedClassId && state.selectedClassId !== selectedClassId) {
-        setSelectedClassId(state.selectedClassId);
-      }
+      if (state.selectedClassId && state.selectedClassId !== selectedClassId) setSelectedClassId(state.selectedClassId);
     }, [state.selectedClassId]);
-
     const cls = (state.classes || []).find(c => c.id === selectedClassId);
     const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls?.id));
     return (
@@ -1086,14 +913,8 @@ export default function App(){
           <div className="text-lg font-semibold">Compare Skills</div>
           <div className="flex items-center gap-2">
             <div className="font-semibold">Class:</div>
-            <select
-              className="border rounded-xl px-3 py-1"
-              value={selectedClassId}
-              onChange={e => {
-                setSelectedClassId(e.target.value);
-                setState(s => ({...s, selectedClassId: e.target.value}));
-              }}
-            >
+            <select className="border rounded-xl px-3 py-1" value={selectedClassId}
+              onChange={e => { setSelectedClassId(e.target.value); setState(s => ({...s, selectedClassId: e.target.value})); }}>
               {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
@@ -1105,8 +926,33 @@ export default function App(){
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Header />
+      <div className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b">
+        <div className="max-w-6xl mx-auto px-4 py-3 grid grid-cols-3 items-center">
+          {state.tab!=="Home" ? (
+            <div className="justify-self-start">
+              <button className="rounded-full border px-3 py-1 text-sm" onClick={()=>setLegendOpen(true)} title="Open legend">Legend</button>
+            </div>
+          ) : <div />}
+          <div className="justify-self-center text-center">
+            <div className="text-xl font-bold">Academic Monitoring</div>
+            <div className="mt-2 inline-flex items-center gap-2 rounded-full border bg-white p-1">
+              {["Home","Setup","Monitor","Compare"].map(t => (
+                <Pill key={t} active={state.tab===t} onClick={()=>switchTab(t)}>{t}</Pill>
+              ))}
+            </div>
+          </div>
+          <div className="justify-self-end flex items-center gap-2">
+            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer text-sm">
+              <Upload size={16}/> Import
+              <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
+            </label>
+            <Button icon={Download} onClick={exportJSON}>Export</Button>
+          </div>
+        </div>
+      </div>
+
       <LegendFlyout open={legendOpen} onClose={()=>setLegendOpen(false)} />
+
       <main className="py-4">
         {state.tab === "Home" && <Home />}
         {state.tab === "Setup" && <Setup />}
