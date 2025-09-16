@@ -5,11 +5,11 @@ import {
 } from "lucide-react";
 
 /* ---------------------------------------------------------
-   Academic Monitoring — v10.3 (FULL)
+   Academic Monitoring — v10.4 (FULL)
    - Monitor has no "Base Skill"
    - Select 1–6 skills → left→right slices (1 skill = full-seat tint)
    - Numbered skill chips show exact slice order (Left→Right)
-   - Apply-to-all: when ON, seat tap sets ALL selected skills; slices disabled
+   - Apply-to-all: when ON, seat tap sets ALL selected skills; slices disabled (dimmed)
    - Slice letters (H/D/P/A) bottom-centered, never overlap name
    - Student Detail tab with Class & Student switchers + Prev/Next
    - Roster: Open on far left; flags consistent (IEP / 504 wraps)
@@ -99,11 +99,14 @@ function getLevel(marks, studentId, skillId){
   if (num === 4) return 3;
   return validLevels.includes(num) ? num : null;
 }
+
+// PATCH: cycle order friendly: Help → Developing → Proficient → Absent → Blank
 function nextLevel(curr){
-  const order = [null, 0, 2, 3, 5];
+  const order = [0, 2, 3, 5, null];
   const idx = order.indexOf(curr);
   return order[(idx + 1) % order.length];
 }
+
 function overlayColor(lv){
   switch (lv) {
     case 0: return "rgba(244, 114, 182, 0.24)";
@@ -257,7 +260,7 @@ function normalizeState(input) {
 }
 
 // --------- Seat & Grid ---------
-function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode, allowSeatClick}){
+function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode, allowSeatClick, applyAll}){
   const isAbsent = singleMode && baseLevel === 5;
   const bgClass = isAbsent
     ? "bg-gray-100 border-gray-300"
@@ -274,7 +277,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
           {slices.map((sl, idx) => (
             <div
               key={idx}
-              className="h-full relative"
+              className={clsx("h-full relative", applyAll ? "opacity-60 cursor-not-allowed" : "")}
               style={{ width: `${100 / slices.length}%`, background: overlayColor(sl.level) }}
               onClick={(e)=>{ e.stopPropagation(); onSliceClick?.(idx); }}
               title={sl.title}
@@ -352,6 +355,7 @@ function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne, onCycl
             onSliceClick={(sliceIdx)=>{ if (!st || applyAll) return; const sid = selectedSkillIds[sliceIdx]; onCycleOne(st.id, sid); }}
             singleMode={singleMode}
             allowSeatClick={(singleMode && !!selectedSkillIds[0]) || (applyAll && count >= 2)}
+            applyAll={applyAll}
           />
         );
       })}
