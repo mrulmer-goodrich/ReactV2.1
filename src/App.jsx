@@ -5,10 +5,10 @@ import {
 } from "lucide-react";
 
 /* ---------------------------------------------------------
-   Academic Monitoring — v10.6 (FULL)
-   FIX: Persist Monitor UI state (selected skills + apply-all) at the APP level.
-        Even if Monitor re-renders or remounts, selections DO NOT clear.
-   Also keeps v10.5 (Monitor top-level) and v10.4 (tap cycle + apply-all clarity).
+   Academic Monitoring — v10.7 (FULL)
+   - FIX: Slice taps now work (slices are on top and receive clicks; name layer ignores clicks).
+   - FIX: Apply-to-all = "advance each selected skill independently by one step" (no syncing to same level).
+   - Persist Monitor selections in App state (from v10.6) so nothing resets visually.
    --------------------------------------------------------- */
 
 const lsKey = "seating-monitor-v7-1";
@@ -21,8 +21,8 @@ const blankState = {
   selectedSkillId: null, // used by Compare defaults
   selectedStudentId: null,
   editAssignMode: "assign",
-  monitorSelectedSkillIds: [],   // NEW: persist Monitor selections
-  monitorApplyAll: false         // NEW: persist Apply-to-all
+  monitorSelectedSkillIds: [],
+  monitorApplyAll: false
 };
 
 const G7_DOMAINS = [
@@ -268,22 +268,27 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
       className={clsx("relative rounded-xl border min-h-[78px] cursor-pointer select-none", bgClass)}
       onClick={allowSeatClick ? onSeatClick : undefined}
     >
-      {/* Multi-skill overlay slices */}
+      {/* Multi-skill overlay slices (on top, clickable only when applyAll is OFF) */}
       {slices && slices.length > 0 && (
-        <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-auto flex">
+        <div
+          className={clsx(
+            "absolute inset-0 rounded-xl overflow-hidden flex z-10",
+            applyAll ? "pointer-events-none" : "pointer-events-auto"
+          )}
+        >
           {slices.map((sl, idx) => (
             <div
               key={idx}
               className={clsx("h-full relative", applyAll ? "opacity-60 cursor-not-allowed" : "")}
               style={{ width: `${100 / slices.length}%`, background: overlayColor(sl.level) }}
-              onClick={(e)=>{ e.stopPropagation(); onSliceClick?.(idx); }}
+              onClick={(e)=>{ if (applyAll) return; e.stopPropagation(); onSliceClick?.(idx); }}
               title={sl.title}
             >
               {/* bottom-centered tiny level letter */}
-              <div className="absolute left-0 right-0 bottom-0 pb-[2px] flex items-end justify-center text-[10px] text-slate-700 font-semibold select-none">
+              <div className="absolute left-0 right-0 bottom-0 pb-[2px] flex items-end justify-center text-[10px] text-slate-700 font-semibold select-none pointer-events-none">
                 {sl.level === 3 ? "P" : sl.level === 2 ? "D" : sl.level === 0 ? "H" : sl.level === 5 ? "A" : ""}
               </div>
-              {idx < slices.length - 1 && (<div className="absolute right-0 top-0 h-full w-[2px] bg-black/40" />)}
+              {idx < slices.length - 1 && (<div className="absolute right-0 top-0 h-full w-[2px] bg-black/40 pointer-events-none" />)}
             </div>
           ))}
         </div>
@@ -291,14 +296,14 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
 
       {/* Absent X overlay (only in single-skill view) */}
       {isAbsent && (
-        <div className="absolute inset-0 pointer-events-none opacity-70">
+        <div className="absolute inset-0 pointer-events-none opacity-70 z-0">
           <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 rotate-45"></div>
           <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 -rotate-45"></div>
         </div>
       )}
 
-      {/* Name + flags + optional badge (only in singleMode) */}
-      <div className="relative p-2 h-full">
+      {/* Name + flags — make this non-interactive so slices/seat receive clicks */}
+      <div className="relative p-2 h-full pointer-events-none">
         <div className="absolute inset-0 flex items-center justify-center px-2">
           <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
             {student?.name || "—"}
@@ -375,7 +380,7 @@ function StudentCard({student, cls, skills, marks}){
   const row = (sk) => {
     const lv = getLevel(marks, student.id, sk.id);
     const badge = lv != null ? (
-      <div className={clsx("px-2 py-0.5 rounded-full text:[11px] ring-1", LEVELS[lv].ring, LEVELS[lv].bg, LEVELS[lv].text)}>
+      <div className={clsx("px-2 py-0.5 rounded-full text-[11px] ring-1", LEVELS[lv].ring, LEVELS[lv].bg, LEVELS[lv].text)}>
         {LEVELS[lv].name}
       </div>
     ) : <div className="text-xs text-slate-400">—</div>;
@@ -455,10 +460,12 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
   };
   const cycleAll = (studentId) => {
     if (!cls || selectedSkillIds.length === 0) return;
-    const first = selectedSkillIds[0];
-    const curr = getLevel(cls.marks, studentId, first);
-    const nxt = nextLevel(curr);
-    selectedSkillIds.forEach(sid => setMark(studentId, sid, nxt));
+    // NEW: advance each selected skill independently by one step
+    selectedSkillIds.forEach((sid) => {
+      const curr = getLevel(cls.marks, studentId, sid);
+      const nxt = nextLevel(curr);
+      setMark(studentId, sid, nxt);
+    });
   };
 
   return (
@@ -487,7 +494,7 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
             return (
               <span key={sid} className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-slate-50 text-sm">
                 <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-900 text-white text-xs">{i+1}</span>
-                <span className="truncate max-w:[220px]">{sk?.name}</span>
+                <span className="truncate max-w-[220px]">{sk?.name}</span>
                 <button className="text-slate-500" onClick={()=>setSelectedSkillIds(arr => arr.filter(x => x !== sid))} title="Remove">×</button>
               </span>
             );
@@ -533,7 +540,7 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
         <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that specific skill. Turn on “Apply to all selected” to set the same level across all slices at once.</div>
       )}
       {selectedSkillIds.length >= 2 && applyAll && (
-        <div className="text-xs text-slate-500">Tip: Tap a seat to set the SAME level across all selected skills for that student. (Slices are disabled in bulk mode.)</div>
+        <div className="text-xs text-slate-500">Tip: Tap a seat to advance all selected skills by one step for that student. (Slices are disabled in bulk mode.)</div>
       )}
     </div>
   );
