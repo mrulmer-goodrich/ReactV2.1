@@ -278,6 +278,9 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick}){
               onClick={(e)=>{ e.stopPropagation(); onSliceClick?.(idx); }}
               title={sl.title}
             >
+              <div className="absolute inset-0 flex items-center justify-center text-[10px] text-slate-700 font-semibold select-none">
+                {sl.level === 3 ? "P" : sl.level === 2 ? "D" : sl.level === 0 ? "H" : sl.level === 5 ? "A" : ""}
+              </div>
               {idx < slices.length - 1 && (<div className="absolute right-0 top-0 h-full w-[2px] bg-black/40" />)}
             </div>
           ))}
@@ -696,7 +699,10 @@ export default function App(){
           </div>
           <div>
             <label className="text-sm text-slate-600">Standard (optional)</label>
-            <input className="w-full border rounded-xl px-3 py-2" value={standard||""} onChange={e=>setStandard(e.target.value)} placeholder="e.g., NS.1 (or NC.7.NS.1)" />
+            <select className="w-full border rounded-xl px-3 py-2" value={standard||""} onChange={e=>setStandard(e.target.value)}>
+              <option value="">(none)</option>
+              {Object.keys(G7_STANDARDS).sort().map(k => (<option key={k} value={k}>{k} — {G7_STANDARDS[k]}</option>))}
+            </select>
           </div>
         </div>
         <div>
@@ -756,7 +762,7 @@ export default function App(){
                       const on = !!st?.flags?.[k];
                       return (
                         <button key={k}
-                          className={clsx("px-2 py-0.5 rounded-full border text-[11px] whitespace-normal leading-tight",
+                          className={clsx("px-2 h-6 inline-flex items-center rounded-full border text-[11px] whitespace-normal leading-none",
                             on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700")}
                           onClick={()=>toggleFlag(st, k)}
                           title={FLAG_META[k].label}>
@@ -822,6 +828,7 @@ export default function App(){
     const cycleOverlay = (studentId, skillId, currLevel) => setMark(studentId, skillId, nextLevel(currLevel));
 
     const toggleOverlay = (id) => {
+      if (id === state.selectedSkillId) return; // prevent base skill as overlay
       setOverlaySkillIds(old => {
         if (old.includes(id)) return old.filter(x => x !== id);
         if (old.length >= 6) return old;
@@ -849,9 +856,10 @@ export default function App(){
             <div className="flex gap-1 flex-wrap">
               {classSkills.map(sk => {
                 const on = overlaySkillIds.includes(sk.id);
+                const disabled = sk.id === state.selectedSkillId;
                 return (
-                  <button key={sk.id} onClick={()=>toggleOverlay(sk.id)}
-                    className={clsx("px-2 py-1 rounded-full border text-xs", on ? "bg-slate-900 text-white border-slate-900" : "")}
+                  <button key={sk.id} onClick={()=>{ if (!disabled) toggleOverlay(sk.id); }}
+                    className={clsx("px-2 py-1 rounded-full border text-xs", disabled ? "opacity-40 cursor-not-allowed" : (on ? "bg-slate-900 text-white border-slate-900" : ""))}
                     title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
                     {sk.name}
                   </button>
@@ -889,13 +897,14 @@ export default function App(){
     const st = (cls?.students || []).find(s => s.id === state.selectedStudentId) || null;
     if (!st) return <div className="p-4 text-slate-500 text-sm">No student selected.</div>;
     const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls.id));
+    const evaluatedSkills = skills.filter(sk => getLevel(cls.marks, st.id, sk.id) != null);
     return (
       <div className="p-3">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="text-lg font-semibold">Student Detail</div>
           <Button onClick={()=>switchTab("Setup")}><Users size={16}/> Back to Setup</Button>
         </div>
-        <StudentCard student={st} cls={cls} skills={skills} marks={cls.marks} />
+        <StudentCard student={st} cls={cls} skills={evaluatedSkills} marks={cls.marks} />
       </div>
     );
   };
