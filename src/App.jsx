@@ -5,17 +5,10 @@ import {
 } from "lucide-react";
 
 /* ---------------------------------------------------------
-   Academic Monitoring — v10.4 (FULL)
-   - Monitor has no "Base Skill"
-   - Select 1–6 skills → left→right slices (1 skill = full-seat tint)
-   - Numbered skill chips show exact slice order (Left→Right)
-   - Apply-to-all: when ON, seat tap sets ALL selected skills; slices disabled (dimmed)
-   - Slice letters (H/D/P/A) bottom-centered, never overlap name
-   - Student Detail tab with Class & Student switchers + Prev/Next
-   - Roster: Open on far left; flags consistent (IEP / 504 wraps)
-   - Skill modal: Domain/Standard optional; Standard dropdown (G7)
-   - Standards shown without "NC.7." + short descriptions
-   - Legend is a left fly-out; hidden on Home
+   Academic Monitoring — v10.6 (FULL)
+   FIX: Persist Monitor UI state (selected skills + apply-all) at the APP level.
+        Even if Monitor re-renders or remounts, selections DO NOT clear.
+   Also keeps v10.5 (Monitor top-level) and v10.4 (tap cycle + apply-all clarity).
    --------------------------------------------------------- */
 
 const lsKey = "seating-monitor-v7-1";
@@ -25,9 +18,11 @@ const blankState = {
   classes: [],
   selectedClassId: null,
   skills: [],
-  selectedSkillId: null, // used by Compare defaults (Monitor ignores)
+  selectedSkillId: null, // used by Compare defaults
   selectedStudentId: null,
-  editAssignMode: "assign"
+  editAssignMode: "assign",
+  monitorSelectedSkillIds: [],   // NEW: persist Monitor selections
+  monitorApplyAll: false         // NEW: persist Apply-to-all
 };
 
 const G7_DOMAINS = [
@@ -100,7 +95,7 @@ function getLevel(marks, studentId, skillId){
   return validLevels.includes(num) ? num : null;
 }
 
-// PATCH: cycle order friendly: Help → Developing → Proficient → Absent → Blank
+// Good-feel cycle: Help → Developing → Proficient → Absent → Blank
 function nextLevel(curr){
   const order = [0, 2, 3, 5, null];
   const idx = order.indexOf(curr);
@@ -206,6 +201,8 @@ function normalizeState(input) {
   if (!Array.isArray(s.classes)) s.classes = [];
   if (!Array.isArray(s.skills)) s.skills = [];
   if (!s.tab) s.tab = "Home";
+  if (!Array.isArray(s.monitorSelectedSkillIds)) s.monitorSelectedSkillIds = [];
+  if (typeof s.monitorApplyAll !== "boolean") s.monitorApplyAll = false;
 
   s.classes = s.classes.map((c, idx) => ({
     id: c.id || `class-${idx}`,
@@ -378,7 +375,7 @@ function StudentCard({student, cls, skills, marks}){
   const row = (sk) => {
     const lv = getLevel(marks, student.id, sk.id);
     const badge = lv != null ? (
-      <div className={clsx("px-2 py-0.5 rounded-full text-[11px] ring-1", LEVELS[lv].ring, LEVELS[lv].bg, LEVELS[lv].text)}>
+      <div className={clsx("px-2 py-0.5 rounded-full text:[11px] ring-1", LEVELS[lv].ring, LEVELS[lv].bg, LEVELS[lv].text)}>
         {LEVELS[lv].name}
       </div>
     ) : <div className="text-xs text-slate-400">—</div>;
@@ -427,7 +424,122 @@ function StudentCard({student, cls, skills, marks}){
   );
 }
 
-// --------- Main App ---------
+/* ===================== MONITOR (Top-level - Controlled) ===================== */
+function MonitorView({ state, setState, currentClass, studentById, setMark }){
+  const cls = currentClass;
+  const classSkills = (state.skills || []).filter(sk => (sk.classIds?.includes(cls?.id)));
+  const selectedSkillIds = state.monitorSelectedSkillIds || [];
+  const applyAll = !!state.monitorApplyAll;
+
+  const setSelectedSkillIds = (updater) => {
+    setState(s => {
+      const current = s.monitorSelectedSkillIds || [];
+      const next = typeof updater === "function" ? updater(current) : updater;
+      return {...s, monitorSelectedSkillIds: next};
+    });
+  };
+  const setApplyAll = (val) => setState(s => ({...s, monitorApplyAll: !!(typeof val === "function" ? val(s.monitorApplyAll) : val)}));
+
+  const toggleSel = (id) => {
+    setSelectedSkillIds(old => {
+      if (old.includes(id)) return old.filter(x => x !== id);
+      if (old.length >= 6) return old;
+      return [...old, id];
+    });
+  };
+
+  const cycleOne = (studentId, skillId) => {
+    if (!cls) return;
+    const curr = getLevel(cls.marks, studentId, skillId);
+    setMark(studentId, skillId, nextLevel(curr));
+  };
+  const cycleAll = (studentId) => {
+    if (!cls || selectedSkillIds.length === 0) return;
+    const first = selectedSkillIds[0];
+    const curr = getLevel(cls.marks, studentId, first);
+    const nxt = nextLevel(curr);
+    selectedSkillIds.forEach(sid => setMark(studentId, sid, nxt));
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <div className="font-semibold">Class:</div>
+          <select className="border rounded-xl px-3 py-1" value={state.selectedClassId || ""} onChange={e => setState(s => ({...s, selectedClassId: e.target.value}))}>
+            {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
+        <label className="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" className="accent-slate-900" checked={applyAll} onChange={e=>setApplyAll(e.target.checked)} />
+          Apply to all selected
+        </label>
+      </div>
+
+      {/* Selected Skills mapping (Left→Right) */}
+      <div className="border rounded-2xl p-2 bg-white">
+        <div className="text-sm font-semibold mb-2">Selected Skills (Left → Right):</div>
+        <div className="flex flex-wrap gap-2 items-center">
+          {selectedSkillIds.length === 0 && <Tiny>No skills selected.</Tiny>}
+          {selectedSkillIds.map((sid, i) => {
+            const sk = (state.skills||[]).find(s => s.id === sid);
+            return (
+              <span key={sid} className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-slate-50 text-sm">
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-900 text-white text-xs">{i+1}</span>
+                <span className="truncate max-w:[220px]">{sk?.name}</span>
+                <button className="text-slate-500" onClick={()=>setSelectedSkillIds(arr => arr.filter(x => x !== sid))} title="Remove">×</button>
+              </span>
+            );
+          })}
+          {classSkills.map(sk => {
+            const on = selectedSkillIds.includes(sk.id);
+            return (
+              <button key={sk.id} onClick={()=>toggleSel(sk.id)}
+                className={clsx("px-3 py-1 rounded-full border text-sm", on ? "bg-slate-900 text-white border-slate-900" : "bg-white")}
+                title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
+                {on ? "✓ " : ""}{sk.name}
+              </button>
+            );
+          })}
+          {selectedSkillIds.length > 0 && (
+            <button className="ml-auto px-3 py-1 rounded-full border text-sm" onClick={()=>setSelectedSkillIds([])}>Clear all</button>
+          )}
+        </div>
+      </div>
+
+      <div>
+        {cls ? (
+          <SeatGrid
+            cls={cls}
+            marks={cls.marks}
+            studentById={studentById}
+            selectedSkillIds={selectedSkillIds}
+            onCycleOne={cycleOne}
+            onCycleAll={cycleAll}
+            applyAll={applyAll}
+          />
+        ) : <Tiny>No class selected.</Tiny>}
+      </div>
+
+      {/* Mode tips */}
+      {selectedSkillIds.length === 0 && (
+        <div className="text-xs text-slate-500">Tip: Choose 1 skill to tint the whole seat and tap to cycle. Choose 2–6 skills to see slices (click a slice to edit).</div>
+      )}
+      {selectedSkillIds.length === 1 && (
+        <div className="text-xs text-slate-500">Tip: Tap a seat to cycle this skill. “Apply to all selected” is only useful when multiple skills are chosen.</div>
+      )}
+      {selectedSkillIds.length >= 2 && !applyAll && (
+        <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that specific skill. Turn on “Apply to all selected” to set the same level across all slices at once.</div>
+      )}
+      {selectedSkillIds.length >= 2 && applyAll && (
+        <div className="text-xs text-slate-500">Tip: Tap a seat to set the SAME level across all selected skills for that student. (Slices are disabled in bulk mode.)</div>
+      )}
+    </div>
+  );
+}
+
+/* ===================== MAIN APP ===================== */
 export default function App(){
   const [state, setState] = useState(blankState);
   const [legendOpen, setLegendOpen] = useState(false);
@@ -732,112 +844,6 @@ export default function App(){
     </div>
   );
 
-  const Monitor = () => {
-    const [selectedSkillIds, setSelectedSkillIds] = useState([]);
-    const [applyAll, setApplyAll] = useState(false);
-
-    const cls = currentClass;
-    const classSkills = (state.skills || []).filter(sk => (sk.classIds?.includes(cls?.id)));
-
-    const toggleSel = (id) => {
-      setSelectedSkillIds(old => {
-        if (old.includes(id)) return old.filter(x => x !== id);
-        if (old.length >= 6) return old;
-        return [...old, id];
-      });
-    };
-
-    const cycleOne = (studentId, skillId) => {
-      if (!cls) return;
-      const curr = getLevel(cls.marks, studentId, skillId);
-      setMark(studentId, skillId, nextLevel(curr));
-    };
-    const cycleAll = (studentId) => {
-      if (!cls || selectedSkillIds.length === 0) return;
-      const first = selectedSkillIds[0];
-      const curr = getLevel(cls.marks, studentId, first);
-      const nxt = nextLevel(curr);
-      selectedSkillIds.forEach(sid => setMark(studentId, sid, nxt));
-    };
-
-    return (
-      <div className="max-w-6xl mx-auto p-4 space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-2">
-            <div className="font-semibold">Class:</div>
-            <select className="border rounded-xl px-3 py-1" value={state.selectedClassId || ""} onChange={e => setState(s => ({...s, selectedClassId: e.target.value}))}>
-              {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" className="accent-slate-900" checked={applyAll} onChange={e=>setApplyAll(e.target.checked)} />
-            Apply to all selected
-          </label>
-        </div>
-
-        {/* Selected Skills mapping (Left→Right) */}
-        <div className="border rounded-2xl p-2 bg-white">
-          <div className="text-sm font-semibold mb-2">Selected Skills (Left → Right):</div>
-          <div className="flex flex-wrap gap-2 items-center">
-            {selectedSkillIds.length === 0 && <Tiny>No skills selected.</Tiny>}
-            {selectedSkillIds.map((sid, i) => {
-              const sk = (state.skills||[]).find(s => s.id === sid);
-              return (
-                <span key={sid} className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-slate-50 text-sm">
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-900 text-white text-xs">{i+1}</span>
-                  <span className="truncate max-w-[220px]">{sk?.name}</span>
-                  <button className="text-slate-500" onClick={()=>setSelectedSkillIds(arr => arr.filter(x => x !== sid))} title="Remove">×</button>
-                </span>
-              );
-            })}
-            {classSkills.map(sk => {
-              const on = selectedSkillIds.includes(sk.id);
-              return (
-                <button key={sk.id} onClick={()=>toggleSel(sk.id)}
-                  className={clsx("px-3 py-1 rounded-full border text-sm", on ? "bg-slate-900 text-white border-slate-900" : "bg-white")}
-                  title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
-                  {on ? "✓ " : ""}{sk.name}
-                </button>
-              );
-            })}
-            {selectedSkillIds.length > 0 && (
-              <button className="ml-auto px-3 py-1 rounded-full border text-sm" onClick={()=>setSelectedSkillIds([])}>Clear all</button>
-            )}
-          </div>
-        </div>
-
-        <div>
-          {cls ? (
-            <SeatGrid
-              cls={cls}
-              marks={cls.marks}
-              studentById={studentById}
-              selectedSkillIds={selectedSkillIds}
-              onCycleOne={cycleOne}
-              onCycleAll={cycleAll}
-              applyAll={applyAll}
-            />
-          ) : <Tiny>No class selected.</Tiny>}
-        </div>
-
-        {/* Mode tips */}
-        {selectedSkillIds.length === 0 && (
-          <div className="text-xs text-slate-500">Tip: Choose 1 skill to tint the whole seat and tap to cycle. Choose 2–6 skills to see slices (click a slice to edit).</div>
-        )}
-        {selectedSkillIds.length === 1 && (
-          <div className="text-xs text-slate-500">Tip: Tap a seat to cycle this skill. “Apply to all selected” is only useful when multiple skills are chosen.</div>
-        )}
-        {selectedSkillIds.length >= 2 && !applyAll && (
-          <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that specific skill. Turn on “Apply to all selected” to set the same level across all slices at once.</div>
-        )}
-        {selectedSkillIds.length >= 2 && applyAll && (
-          <div className="text-xs text-slate-500">Tip: Tap a seat to set the SAME level across all selected skills for that student. (Slices are disabled in bulk mode.)</div>
-        )}
-      </div>
-    );
-  };
-
   const Student = () => {
     // In-page Class & Student switchers
     const classes = state.classes || [];
@@ -1034,7 +1040,15 @@ export default function App(){
       <main className="py-4">
         {state.tab === "Home" && <Home />}
         {state.tab === "Setup" && <Setup />}
-        {state.tab === "Monitor" && <Monitor />}
+        {state.tab === "Monitor" && (
+          <MonitorView
+            state={state}
+            setState={setState}
+            currentClass={currentClass}
+            studentById={studentById}
+            setMark={setMark}
+          />
+        )}
         {state.tab === "Student" && <Student />}
         {state.tab === "Compare" && <Compare />}
       </main>
