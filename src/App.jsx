@@ -256,11 +256,11 @@ function overlayColor(lv){
   }
 }
 
-function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick}){
-  const isAbsent = baseLevel === 5;
+function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode}){
+  const isAbsent = singleMode && baseLevel === 5;
   const bgClass = isAbsent
     ? "bg-gray-100 border-gray-300"
-    : (baseLevel!=null ? `${LEVELS[baseLevel].bg} border-slate-300` : "bg-white border-slate-300 hover:shadow-sm");
+    : (singleMode && baseLevel!=null ? `${LEVELS[baseLevel].bg} border-slate-300` : "bg-white border-slate-300 hover:shadow-sm");
 
   return (
     <div
@@ -303,9 +303,8 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick}){
         <div className="absolute left-2 bottom-2 flex gap-1 flex-wrap max-w-[70%]">
           {flagKeys.filter(k => flags?.[k]).map(k => <Dot key={k} className={FLAG_META[k].dot} />)}
         </div>
-        {baseLevel!=null && (
-          <div className={clsx("absolute right-2 bottom-2 px-2 py-0.5 rounded-full text-[10px] ring-1",
-            LEVELS[baseLevel].ring, LEVELS[baseLevel].bg, LEVELS[baseLevel].text)}>
+        {singleMode && baseLevel!=null && (
+          <div className={clsx("absolute right-2 bottom-2 px-2 py-0.5 rounded-full text-[10px] ring-1", LEVELS[baseLevel].ring, LEVELS[baseLevel].bg, LEVELS[baseLevel].text)}>
             {LEVELS[baseLevel].name}
           </div>
         )}
@@ -314,17 +313,29 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick}){
   );
 }
 
-function SeatGrid({cls, marks, studentById, baseSkillId, overlaySkillIds, onCycleBase, onCycleOverlay}){
+function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne, onCycleAll, applyAll}){
   const rows = cls.rows || 4, cols = cls.cols || 9;
   const grid = Array.from({length: rows}).map((_,r)=> Array.from({length: cols}).map((__,c)=> cls.seats.find(s => s.r===r && s.c===c) || {r,c,studentId:null}));
   return (
     <div className="grid gap-2" style={{gridTemplateColumns: `repeat(${cols}, minmax(110px, 1fr))`}}>
       {grid.flat().map((seat, i) => {
         const st = studentById(seat.studentId);
-        const baseLevel = (st && baseSkillId) ? getLevel(marks, st.id, baseSkillId) : null;
-        const slices = (st && overlaySkillIds && overlaySkillIds.length)
-          ? overlaySkillIds.map(sid => ({ skillId: sid, level: getLevel(marks, st.id, sid), title: "Click to cycle" }))
+        const count = selectedSkillIds?.length || 0;
+        const singleMode = count === 1;
+        const baseLevel = (st && singleMode) ? getLevel(marks, st.id, selectedSkillIds[0]) : null;
+        const slices = (st && !singleMode && count >= 2)
+          ? selectedSkillIds.map(sid => ({ skillId: sid, level: getLevel(marks, st.id, sid), title: "Click to cycle" }))
           : [];
+
+        const handleSeatClick = () => {
+          if (!st) return;
+          if (applyAll && count >= 2) {
+            onCycleAll(st.id);
+          } else if (singleMode) {
+            onCycleOne(st.id, selectedSkillIds[0]);
+          }
+        };
+
         return (
           <Seat
             key={i}
@@ -332,8 +343,9 @@ function SeatGrid({cls, marks, studentById, baseSkillId, overlaySkillIds, onCycl
             baseLevel={baseLevel}
             flags={st?.flags}
             slices={slices}
-            onSeatClick={()=>{ if (st && baseSkillId) onCycleBase(st.id, baseSkillId, baseLevel); }}
-            onSliceClick={(sliceIdx)=>{ if (!st) return; const sid = overlaySkillIds[sliceIdx]; const curr = getLevel(marks, st.id, sid); onCycleOverlay(st.id, sid, curr); }}
+            onSeatClick={handleSeatClick}
+            onSliceClick={(sliceIdx)=>{ if (!st) return; const sid = selectedSkillIds[sliceIdx]; onCycleOne(st.id, sid); }}
+            singleMode={singleMode}
           />
         );
       })}
@@ -816,24 +828,37 @@ export default function App(){
     </div>
   );
 
+  
   const Monitor = () => {
-    const [overlaySkillIds, setOverlaySkillIds] = useState([]);
+    const [selectedSkillIds, setSelectedSkillIds] = useState([]); // up to 6
+    const [applyAll, setApplyAll] = useState(false); // when on, tapping a seat cycles ALL selected skills
+
     const cls = currentClass;
-
-    useEffect(() => { setOverlaySkillIds([]); }, [cls?.id]);
-
     const classSkills = (state.skills || []).filter(sk => (sk.classIds?.includes(cls?.id)));
 
-    const cycleBase = (studentId, skillId, currLevel) => setMark(studentId, skillId, nextLevel(currLevel));
-    const cycleOverlay = (studentId, skillId, currLevel) => setMark(studentId, skillId, nextLevel(currLevel));
-
-    const toggleOverlay = (id) => {
-      if (id === state.selectedSkillId) return; // prevent base skill as overlay
-      setOverlaySkillIds(old => {
+    // toggle a skill in the selected list
+    const toggleSel = (id) => {
+      setSelectedSkillIds(old => {
         if (old.includes(id)) return old.filter(x => x !== id);
         if (old.length >= 6) return old;
         return [...old, id];
       });
+    };
+
+    const cycleOne = (studentId, skillId) => {
+      if (!cls) return;
+      const curr = getLevel(cls.marks, studentId, skillId);
+      setMark(studentId, skillId, nextLevel(curr));
+    };
+
+    const cycleAll = (studentId) => {
+      if (!cls) return;
+      if (selectedSkillIds.length === 0) return;
+      // compute next relative to the FIRST selected skill to keep it predictable
+      const first = selectedSkillIds[0];
+      const curr = getLevel(cls.marks, studentId, first);
+      const nxt = nextLevel(curr);
+      selectedSkillIds.forEach(sid => setMark(studentId, sid, nxt));
     };
 
     return (
@@ -841,32 +866,38 @@ export default function App(){
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <div className="font-semibold">Class:</div>
-            <select className="border rounded-xl px-3 py-1" value={state.selectedClassId || ""} onChange={e => setState(s => ({...s, selectedClassId: e.target.value}))}>
+            <select
+              className="border rounded-xl px-3 py-1"
+              value={state.selectedClassId || ""}
+              onChange={e => setState(s => ({...s, selectedClassId: e.target.value}))}
+            >
               {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="font-semibold">Base Skill:</div>
-            <select className="border rounded-xl px-3 py-1" value={state.selectedSkillId || ""} onChange={e => setState(s => ({...s, selectedSkillId: e.target.value}))}>
-              {classSkills.map(sk => <option key={sk.id} value={sk.id}>{sk.name}</option>)}
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="font-semibold">Overlay Skills (left→right slices):</div>
+
+          <div className="flex items-center gap-3">
+            <div className="font-semibold">Selected Skills (tap to toggle):</div>
             <div className="flex gap-1 flex-wrap">
               {classSkills.map(sk => {
-                const on = overlaySkillIds.includes(sk.id);
-                const disabled = sk.id === state.selectedSkillId;
+                const on = selectedSkillIds.includes(sk.id);
                 return (
-                  <button key={sk.id} onClick={()=>{ if (!disabled) toggleOverlay(sk.id); }}
-                    className={clsx("px-2 py-1 rounded-full border text-xs", disabled ? "opacity-40 cursor-not-allowed" : (on ? "bg-slate-900 text-white border-slate-900" : ""))}
-                    title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
+                  <button
+                    key={sk.id}
+                    onClick={()=>toggleSel(sk.id)}
+                    className={clsx("px-2 py-1 rounded-full border text-xs", on ? "bg-slate-900 text-white border-slate-900" : "")}
+                    title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}
+                  >
                     {sk.name}
                   </button>
                 );
               })}
             </div>
           </div>
+
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" className="accent-slate-900" checked={applyAll} onChange={e=>setApplyAll(e.target.checked)} />
+            Apply to all selected
+          </label>
         </div>
 
         <div>
@@ -875,18 +906,25 @@ export default function App(){
               cls={cls}
               marks={cls.marks}
               studentById={studentById}
-              baseSkillId={state.selectedSkillId}
-              overlaySkillIds={overlaySkillIds}
-              onCycleBase={cycleBase}
-              onCycleOverlay={cycleOverlay}
+              selectedSkillIds={selectedSkillIds}
+              onCycleOne={cycleOne}
+              onCycleAll={cycleAll}
+              applyAll={applyAll}
             />
           ) : <Tiny>No class selected.</Tiny>}
         </div>
 
-        {overlaySkillIds.length > 0 ? (
-          <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that overlay skill. The whole seat color follows the Base Skill.</div>
-        ) : (
-          <div className="text-xs text-slate-500">Tip: Click a seat to cycle the Base Skill level. Add overlays to edit multiple skills on one chart.</div>
+        {selectedSkillIds.length === 0 && (
+          <div className="text-xs text-slate-500">Tip: Choose 1 skill to tint the whole seat and tap to cycle. Choose 2–6 skills to see slices (click a slice to edit).</div>
+        )}
+        {selectedSkillIds.length === 1 && (
+          <div className="text-xs text-slate-500">Tip: Tap a seat to cycle this skill. Turn on “Apply to all selected” (not needed here) only when multiple skills are chosen.</div>
+        )}
+        {selectedSkillIds.length >= 2 && !applyAll && (
+          <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that skill. Turn on “Apply to all selected” to set all slices at once.</div>
+        )}
+        {selectedSkillIds.length >= 2 && applyAll && (
+          <div className="text-xs text-slate-500">Tip: Tap a seat to set the SAME level across all selected skills. (Slices still show H/D/P/A and separators.)</div>
         )}
       </div>
     );
