@@ -1,21 +1,21 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Download, Upload, Plus, Pencil, Users, Home as HomeIcon,
-  ListChecks, GraduationCap, Trash2, Wrench, X as XIcon, Check, XCircle
+  ListChecks, GraduationCap, Trash2, Wrench, X as XIcon, Check, XCircle, ChevronLeft, ChevronRight
 } from "lucide-react";
 
 /* ---------------------------------------------------------
-   Academic Monitoring — v10.1 (Tweaks applied)
-   - Blank default (no badge) until marked
-   - Levels: Help(0), Developing(2), Proficient(3), Absent(5)
-   - Student name centered; badge bottom-right; flags along bottom-left
-   - Legend flyout hidden on Home
-   - Add Skill uses modal (consistent on Mac/PC/iPad)
-   - Skill classIds respected; edit in modal
-   - Roster: Open button to FAR LEFT; flag pills uniform; "IEP / 504" wraps
-   - Monitor: base-level colors tint whole cell; overlays left→right with dark separators; click slices to edit
-   - Monitor toolbar shows "Base Skill" and "Overlay Skills"
-   - Compare: class dropdown; equal-width columns; up to 6 skills
+   Academic Monitoring — v10.3 (FULL)
+   - Monitor has no "Base Skill"
+   - Select 1–6 skills → left→right slices (1 skill = full-seat tint)
+   - Numbered skill chips show exact slice order (Left→Right)
+   - Apply-to-all: when ON, seat tap sets ALL selected skills; slices disabled
+   - Slice letters (H/D/P/A) bottom-centered, never overlap name
+   - Student Detail tab with Class & Student switchers + Prev/Next
+   - Roster: Open on far left; flags consistent (IEP / 504 wraps)
+   - Skill modal: Domain/Standard optional; Standard dropdown (G7)
+   - Standards shown without "NC.7." + short descriptions
+   - Legend is a left fly-out; hidden on Home
    --------------------------------------------------------- */
 
 const lsKey = "seating-monitor-v7-1";
@@ -25,7 +25,7 @@ const blankState = {
   classes: [],
   selectedClassId: null,
   skills: [],
-  selectedSkillId: null,
+  selectedSkillId: null, // used by Compare defaults (Monitor ignores)
   selectedStudentId: null,
   editAssignMode: "assign"
 };
@@ -76,14 +76,128 @@ const LEVELS = {
 const validLevels = [0,2,3,5];
 
 const FLAG_META = {
-  ml:      { label: "ML",      dot: "bg-sky-500" },
-  mlNew:   { label: "ML New",  dot: "bg-indigo-500" },
-  iep504:  { label: "IEP / 504",  dot: "bg-purple-500" }, // spaced for wrapping
-  ec:      { label: "EC",      dot: "bg-orange-500" },
-  bubble:  { label: "Bubble",  dot: "bg-rose-500" },
+  ml:      { label: "ML",        dot: "bg-sky-500" },
+  mlNew:   { label: "ML New",    dot: "bg-indigo-500" },
+  iep504:  { label: "IEP / 504", dot: "bg-purple-500" },
+  ec:      { label: "EC",        dot: "bg-orange-500" },
+  bubble:  { label: "Bubble",    dot: "bg-rose-500" },
 };
 const flagKeys = Object.keys(FLAG_META);
 
+// --------- helpers ---------
+function cryptoRandomId(){ return Math.random().toString(36).slice(2,10); }
+function clsx(...a){ return a.filter(Boolean).join(" "); }
+function Tiny({children}){ return <span className="text-[12px] text-slate-500">{children}</span>; }
+function Dot({className}){ return <span className={clsx("inline-block w-2 h-2 rounded-full", className)} />; }
+
+function getLevel(marks, studentId, skillId){
+  if (!marks) return null;
+  const v = marks[`${studentId}:${skillId}`];
+  if (v === undefined || v === null) return null;
+  const num = Number(v);
+  if (num === 1) return 2;
+  if (num === 4) return 3;
+  return validLevels.includes(num) ? num : null;
+}
+function nextLevel(curr){
+  const order = [null, 0, 2, 3, 5];
+  const idx = order.indexOf(curr);
+  return order[(idx + 1) % order.length];
+}
+function overlayColor(lv){
+  switch (lv) {
+    case 0: return "rgba(244, 114, 182, 0.24)";
+    case 2: return "rgba(251, 191, 36, 0.24)";
+    case 3: return "rgba(16, 185, 129, 0.24)";
+    case 5: return "rgba(107, 114, 128, 0.24)";
+    default: return "transparent";
+  }
+}
+
+// --------- UI atoms ---------
+function Button({icon:Icon, children, onClick, className="", title, type="button"}){
+  return (
+    <button
+      type={type}
+      title={title}
+      onClick={onClick}
+      className={clsx(
+        "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm",
+        "hover:shadow-sm active:scale-[.99] transition",
+        "border-slate-200 bg-white text-slate-700",
+        className
+      )}
+    >
+      {Icon && <Icon size={16} />} {children}
+    </button>
+  );
+}
+function Pill({active, onClick, children}){
+  return (
+    <button
+      onClick={onClick}
+      className={clsx(
+        "px-3 py-1 rounded-full border text-sm",
+        active ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700",
+        "hover:shadow-sm transition"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+function Modal({open, title, children, onClose}){
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-xl border w-[90vw] max-w-xl">
+        <div className="p-3 border-b flex items-center justify-between">
+          <div className="font-semibold">{title}</div>
+          <button onClick={onClose} className="text-slate-500"><XIcon size={18}/></button>
+        </div>
+        <div className="p-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+function LegendFlyout({open, onClose}){
+  return (
+    <div className={clsx(
+      "fixed top-0 left-0 h-full w-72 bg-white border-r border-slate-200 shadow-xl z-40 transition-transform",
+      open ? "translate-x-0" : "-translate-x-full"
+    )}>
+      <div className="p-4 border-b flex items-center justify-between">
+        <div className="font-semibold">Legend</div>
+        <button className="text-slate-500" onClick={onClose}>Close</button>
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="grid grid-cols-1 gap-2">
+          {[0,2,3,5].map(lv=> (
+            <div key={lv} className={clsx("rounded-xl px-2 py-1 text-xs ring-1", LEVELS[lv].ring, LEVELS[lv].bg, LEVELS[lv].text)}>
+              {LEVELS[lv].name}
+            </div>
+          ))}
+        </div>
+        <div>
+          <div className="text-xs text-slate-600 mb-1">Student Flags</div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            {flagKeys.map(k => (
+              <span key={k} className="inline-flex items-center gap-1 rounded-full bg-slate-100 border px-2 py-1">
+                <Dot className={FLAG_META[k].dot} />{FLAG_META[k].label}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="text-xs text-slate-500">
+          Blank seats mean no data entered yet. Absent seats show an X overlay (single-skill view).
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --------- normalize & storage ---------
 function normalizeState(input) {
   const s = JSON.parse(JSON.stringify(input || {}));
   if (!Array.isArray(s.classes)) s.classes = [];
@@ -142,121 +256,8 @@ function normalizeState(input) {
   return s;
 }
 
-function cryptoRandomId(){ return Math.random().toString(36).slice(2,10); }
-function clsx(...a){ return a.filter(Boolean).join(" "); }
-function Tiny({children}){ return <span className="text-[12px] text-slate-500">{children}</span>; }
-function Dot({className}){ return <span className={clsx("inline-block w-2 h-2 rounded-full", className)} />; }
-
-function Button({icon:Icon, children, onClick, className="", title, type="button"}){
-  return (
-    <button
-      type={type}
-      title={title}
-      onClick={onClick}
-      className={clsx(
-        "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm",
-        "hover:shadow-sm active:scale-[.99] transition",
-        "border-slate-200 bg-white text-slate-700",
-        className
-      )}
-    >
-      {Icon && <Icon size={16} />} {children}
-    </button>
-  );
-}
-function Pill({active, onClick, children}){
-  return (
-    <button
-      onClick={onClick}
-      className={clsx(
-        "px-3 py-1 rounded-full border text-sm",
-        active ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700",
-        "hover:shadow-sm transition"
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Modal({open, title, children, onClose}){
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-xl border w-[90vw] max-w-xl">
-        <div className="p-3 border-b flex items-center justify-between">
-          <div className="font-semibold">{title}</div>
-          <button onClick={onClose} className="text-slate-500"><XIcon size={18}/></button>
-        </div>
-        <div className="p-4">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function LegendFlyout({open, onClose}){
-  return (
-    <div className={clsx(
-      "fixed top-0 left-0 h-full w-72 bg-white border-r border-slate-200 shadow-xl z-40 transition-transform",
-      open ? "translate-x-0" : "-translate-x-full"
-    )}>
-      <div className="p-4 border-b flex items-center justify-between">
-        <div className="font-semibold">Legend</div>
-        <button className="text-slate-500" onClick={onClose}>Close</button>
-      </div>
-      <div className="p-4 space-y-3">
-        <div className="grid grid-cols-1 gap-2">
-          {[0,2,3,5].map(lv=> (
-            <div key={lv} className={clsx("rounded-xl px-2 py-1 text-xs ring-1", LEVELS[lv].ring, LEVELS[lv].bg, LEVELS[lv].text)}>
-              {LEVELS[lv].name}
-            </div>
-          ))}
-        </div>
-        <div>
-          <div className="text-xs text-slate-600 mb-1">Student Flags</div>
-          <div className="flex flex-wrap gap-2 text-xs">
-            {flagKeys.map(k => (
-              <span key={k} className="inline-flex items-center gap-1 rounded-full bg-slate-100 border px-2 py-1">
-                <Dot className={FLAG_META[k].dot} />{FLAG_META[k].label}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="text-xs text-slate-500">
-          Blank seats mean no data entered yet. Absent seats show an X overlay.
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------- Seat helpers ----------
-function getLevel(marks, studentId, skillId){
-  if (!marks) return null;
-  const v = marks[`${studentId}:${skillId}`];
-  if (v === undefined || v === null) return null;
-  const num = Number(v);
-  if (num === 1) return 2;
-  if (num === 4) return 3;
-  return validLevels.includes(num) ? num : null;
-}
-function nextLevel(curr){
-  const order = [null, 0, 2, 3, 5];
-  const idx = order.indexOf(curr);
-  return order[(idx + 1) % order.length];
-}
-function overlayColor(lv){
-  switch (lv) {
-    case 0: return "rgba(244, 114, 182, 0.24)";
-    case 2: return "rgba(251, 191, 36, 0.24)";
-    case 3: return "rgba(16, 185, 129, 0.24)";
-    case 5: return "rgba(107, 114, 128, 0.24)";
-    default: return "transparent";
-  }
-}
-
-function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode}){
+// --------- Seat & Grid ---------
+function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode, allowSeatClick}){
   const isAbsent = singleMode && baseLevel === 5;
   const bgClass = isAbsent
     ? "bg-gray-100 border-gray-300"
@@ -265,9 +266,9 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
   return (
     <div
       className={clsx("relative rounded-xl border min-h-[78px] cursor-pointer select-none", bgClass)}
-      onClick={slices && slices.length ? undefined : onSeatClick}
+      onClick={allowSeatClick ? onSeatClick : undefined}
     >
-      {/* Overlay slices left→right with dark separators */}
+      {/* Multi-skill overlay slices */}
       {slices && slices.length > 0 && (
         <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-auto flex">
           {slices.map((sl, idx) => (
@@ -278,7 +279,8 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
               onClick={(e)=>{ e.stopPropagation(); onSliceClick?.(idx); }}
               title={sl.title}
             >
-              <div className="absolute inset-0 flex items-center justify-center text-[10px] text-slate-700 font-semibold select-none">
+              {/* bottom-centered tiny level letter */}
+              <div className="absolute left-0 right-0 bottom-0 pb-[2px] flex items-end justify-center text-[10px] text-slate-700 font-semibold select-none">
                 {sl.level === 3 ? "P" : sl.level === 2 ? "D" : sl.level === 0 ? "H" : sl.level === 5 ? "A" : ""}
               </div>
               {idx < slices.length - 1 && (<div className="absolute right-0 top-0 h-full w-[2px] bg-black/40" />)}
@@ -286,14 +288,16 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
           ))}
         </div>
       )}
-      {/* Absent X overlay */}
+
+      {/* Absent X overlay (only in single-skill view) */}
       {isAbsent && (
         <div className="absolute inset-0 pointer-events-none opacity-70">
           <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 rotate-45"></div>
           <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 -rotate-45"></div>
         </div>
       )}
-      {/* Content layer */}
+
+      {/* Name + flags + optional badge (only in singleMode) */}
       <div className="relative p-2 h-full">
         <div className="absolute inset-0 flex items-center justify-center px-2">
           <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
@@ -304,7 +308,8 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
           {flagKeys.filter(k => flags?.[k]).map(k => <Dot key={k} className={FLAG_META[k].dot} />)}
         </div>
         {singleMode && baseLevel!=null && (
-          <div className={clsx("absolute right-2 bottom-2 px-2 py-0.5 rounded-full text-[10px] ring-1", LEVELS[baseLevel].ring, LEVELS[baseLevel].bg, LEVELS[baseLevel].text)}>
+          <div className={clsx("absolute right-2 bottom-2 px-2 py-0.5 rounded-full text-[10px] ring-1",
+            LEVELS[baseLevel].ring, LEVELS[baseLevel].bg, LEVELS[baseLevel].text)}>
             {LEVELS[baseLevel].name}
           </div>
         )}
@@ -344,8 +349,9 @@ function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne, onCycl
             flags={st?.flags}
             slices={slices}
             onSeatClick={handleSeatClick}
-            onSliceClick={(sliceIdx)=>{ if (!st) return; const sid = selectedSkillIds[sliceIdx]; onCycleOne(st.id, sid); }}
+            onSliceClick={(sliceIdx)=>{ if (!st || applyAll) return; const sid = selectedSkillIds[sliceIdx]; onCycleOne(st.id, sid); }}
             singleMode={singleMode}
+            allowSeatClick={(singleMode && !!selectedSkillIds[0]) || (applyAll && count >= 2)}
           />
         );
       })}
@@ -353,6 +359,7 @@ function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne, onCycl
   );
 }
 
+// --------- Student Details ---------
 function StudentCard({student, cls, skills, marks}){
   const grouped = useMemo(() => {
     const byStd = {};
@@ -416,127 +423,12 @@ function StudentCard({student, cls, skills, marks}){
   );
 }
 
-function CompareTable({cls, skills, marks}){
-  const [selected, setSelected] = useState([]);
-  const [sortKey, setSortKey] = useState("name");
-  const [sortDir, setSortDir] = useState("asc");
-
-  const toggleSel = (id) => {
-    setSelected((arr) => {
-      if (arr.includes(id)) return arr.filter(x => x !== id);
-      if (arr.length >= 6) return [...arr];
-      return [...arr, id];
-    });
-  };
-
-  const rows = (cls?.students || []).map(st => {
-    const cells = selected.map(sid => ({ sid, lv: getLevel(marks, st.id, sid) }));
-    return { st, cells };
-  });
-
-  const cmp = (a, b) => {
-    if (sortKey === "name") {
-      const n1 = a.st.name.toLowerCase(), n2 = b.st.name.toLowerCase();
-      return sortDir === "asc" ? (n1 < n2 ? -1 : n1 > n2 ? 1 : 0) : (n1 > n2 ? -1 : n1 < n2 ? 1 : 0);
-    } else {
-      const sid = sortKey;
-      const l1 = a.cells.find(c=>c.sid===sid)?.lv ?? -1;
-      const l2 = b.cells.find(c=>c.sid===sid)?.lv ?? -1;
-      return sortDir === "asc" ? (l1 - l2) : (l2 - l1);
-    }
-  };
-
-  const sortedRows = [...rows].sort(cmp);
-
-  const headerClick = (key) => {
-    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(key); setSortDir("asc"); }
-  };
-
-  const cellBg = (lv) => {
-    switch (lv) {
-      case 0: return "#fecaca";
-      case 2: return "#fde68a";
-      case 3: return "#bbf7d0";
-      case 5: return "#e5e7eb";
-      default: return "#ffffff";
-    }
-  };
-
-  return (
-    <div className="max-w-6xl mx-auto p-4 space-y-4">
-      <div className="flex flex-wrap gap-2">
-        {skills.map(sk => (
-          <button
-            key={sk.id}
-            onClick={()=>toggleSel(sk.id)}
-            className={clsx(
-              "px-3 py-1 rounded-full border text-sm",
-              selected.includes(sk.id) ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700"
-            )}
-            title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}
-          >
-            {sk.name}
-          </button>
-        ))}
-      </div>
-
-      {selected.length > 0 ? (
-        <div className="overflow-auto border rounded-2xl">
-          <table className="w-full table-fixed">
-            <colgroup>
-              <col style={{width:"220px"}}/>
-              {selected.map((sid)=>(<col key={sid} style={{width:`${Math.max(120, Math.floor(800/selected.length))}px`}}/>))}
-            </colgroup>
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="text-left px-3 py-2 cursor-pointer" onClick={()=>headerClick("name")}>Student</th>
-                {selected.map(sid => {
-                  const sk = skills.find(s => s.id === sid);
-                  return (
-                    <th
-                      key={sid}
-                      className="px-3 py-2 text-left cursor-pointer"
-                      onClick={()=>headerClick(sid)}
-                      title={(prettyStandard(sk?.standard) ? `${prettyStandard(sk?.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk?.standard)] || "")}
-                    >
-                      <div className="font-medium truncate">{sk?.name}</div>
-                      <div className="text-xs text-slate-500 truncate">
-                        {prettyStandard(sk?.standard)} {G7_STANDARDS[prettyStandard(sk?.standard)] ? `· ${G7_STANDARDS[prettyStandard(sk?.standard)]}` : ""}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map(({st, cells}) => (
-                <tr key={st.id} className="border-t">
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <div className="font-medium">{st.name}</div>
-                  </td>
-                  {cells.map(({sid, lv}) => (
-                    <td key={sid} className="px-3 py-2">
-                      <div className="h-6 rounded-md ring-1" style={{background: cellBg(lv), borderColor: "#e5e7eb"}} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="text-slate-500 text-sm">Pick up to six skills to compare.</div>
-      )}
-    </div>
-  );
-}
-
-// ---------- Main App ----------
+// --------- Main App ---------
 export default function App(){
   const [state, setState] = useState(blankState);
   const [legendOpen, setLegendOpen] = useState(false);
 
+  // Skill modal
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [skillEditing, setSkillEditing] = useState(null);
 
@@ -553,8 +445,8 @@ export default function App(){
 
   const currentClass = useMemo(() => (state.classes || []).find(c => c.id === state.selectedClassId), [state]);
   const studentById = (id) => (currentClass?.students || []).find(s => s.id === id) || null;
-
   const switchTab = (tab) => setState(s => ({...s, tab}));
+
   const importJSON = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -576,6 +468,7 @@ export default function App(){
     URL.revokeObjectURL(url);
   };
 
+  // Setup actions
   const addClass = () => setState(s => {
     const id = cryptoRandomId();
     const cls = { id, name: `Block ${s.classes.length+1}`, rows:4, cols:9, layoutMode:"grid", seats:[], students:[], marks:{} };
@@ -611,6 +504,7 @@ export default function App(){
   };
   const openStudentDetail = (st) => setState(s => ({...s, selectedStudentId: st.id, tab: "Student"}));
 
+  // Skill modal save/delete
   const saveSkillFromModal = (payload) => {
     setState(s => {
       if (payload.id) {
@@ -642,6 +536,7 @@ export default function App(){
     })}));
   };
 
+  // ---------- Header ----------
   const Header = () => (
     <div className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b">
       <div className="max-w-6xl mx-auto px-4 py-3 grid grid-cols-3 items-center">
@@ -653,7 +548,7 @@ export default function App(){
         <div className="justify-self-center text-center">
           <div className="text-xl font-bold">Academic Monitoring</div>
           <div className="mt-2 inline-flex items-center gap-2 rounded-full border bg-white p-1">
-            {["Home","Setup","Monitor","Compare"].map(t => (
+            {["Home","Setup","Monitor","Compare","Student"].map(t => (
               <Pill key={t} active={state.tab===t} onClick={()=>switchTab(t)}>{t}</Pill>
             ))}
           </div>
@@ -669,6 +564,7 @@ export default function App(){
     </div>
   );
 
+  // ---------- Pages ----------
   const Home = () => (
     <div className="max-w-3xl mx-auto p-6 text-center">
       <div className="mx-auto mb-4 flex items-center justify-center gap-3 text-slate-600">
@@ -678,7 +574,7 @@ export default function App(){
         <svg width="44" height="44" viewBox="0 0 24 24"><text x="6" y="16" fontSize="16">÷</text></svg>
       </div>
       <div className="text-2xl font-bold mb-2">Welcome</div>
-      <p className="text-slate-600">Use <b>Setup</b> to build classes, rosters, and skills. Use <b>Monitor</b> to mark skill levels on seats. Try <b>Compare</b> to view up to six skills at once, sortable by each skill.</p>
+      <p className="text-slate-600">Use <b>Setup</b> to build classes, rosters, and skills. Use <b>Monitor</b> to mark one or many skills on seats. Try <b>Compare</b> to view up to six skills at once, sortable by each skill. Use <b>Student</b> to browse students without going back to Setup.</p>
     </div>
   );
 
@@ -740,6 +636,7 @@ export default function App(){
 
   const Setup = () => (
     <div className="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Classes */}
       <div className="border rounded-2xl p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="font-semibold flex items-center gap-2"><HomeIcon size={16}/>Classes</div>
@@ -757,6 +654,7 @@ export default function App(){
         </div>
       </div>
 
+      {/* Roster */}
       <div className="border rounded-2xl p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="font-semibold flex items-center gap-2"><Users size={16}/>Roster</div>
@@ -793,6 +691,7 @@ export default function App(){
         ) : <Tiny>Select a class.</Tiny>}
       </div>
 
+      {/* Skills */}
       <div className="border rounded-2xl p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="font-semibold flex items-center gap-2"><Wrench size={16}/>Skills</div>
@@ -800,7 +699,7 @@ export default function App(){
         </div>
         <div className="space-y-2 max-h-[420px] overflow-auto pr-1">
           {(state.skills || []).map(sk => (
-            <div key={sk.id} className="px-3 py-2 rounded-xl border">
+            <div key={sk.id} className="px-3 py-2 rounded-2xl border">
               <div className="flex items-center justify-between">
                 <div className="font-medium">{sk.name}</div>
                 <div className="flex gap-2">
@@ -818,6 +717,7 @@ export default function App(){
         </div>
       </div>
 
+      {/* Add/Edit Skill Modal */}
       <Modal open={skillModalOpen} title={skillEditing ? "Edit Skill" : "Add Skill"} onClose={()=>setSkillModalOpen(false)}>
         <SkillForm
           initial={skillEditing}
@@ -828,15 +728,13 @@ export default function App(){
     </div>
   );
 
-  
   const Monitor = () => {
-    const [selectedSkillIds, setSelectedSkillIds] = useState([]); // up to 6
-    const [applyAll, setApplyAll] = useState(false); // when on, tapping a seat cycles ALL selected skills
+    const [selectedSkillIds, setSelectedSkillIds] = useState([]);
+    const [applyAll, setApplyAll] = useState(false);
 
     const cls = currentClass;
     const classSkills = (state.skills || []).filter(sk => (sk.classIds?.includes(cls?.id)));
 
-    // toggle a skill in the selected list
     const toggleSel = (id) => {
       setSelectedSkillIds(old => {
         if (old.includes(id)) return old.filter(x => x !== id);
@@ -850,11 +748,8 @@ export default function App(){
       const curr = getLevel(cls.marks, studentId, skillId);
       setMark(studentId, skillId, nextLevel(curr));
     };
-
     const cycleAll = (studentId) => {
-      if (!cls) return;
-      if (selectedSkillIds.length === 0) return;
-      // compute next relative to the FIRST selected skill to keep it predictable
+      if (!cls || selectedSkillIds.length === 0) return;
       const first = selectedSkillIds[0];
       const curr = getLevel(cls.marks, studentId, first);
       const nxt = nextLevel(curr);
@@ -866,38 +761,46 @@ export default function App(){
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <div className="font-semibold">Class:</div>
-            <select
-              className="border rounded-xl px-3 py-1"
-              value={state.selectedClassId || ""}
-              onChange={e => setState(s => ({...s, selectedClassId: e.target.value}))}
-            >
+            <select className="border rounded-xl px-3 py-1" value={state.selectedClassId || ""} onChange={e => setState(s => ({...s, selectedClassId: e.target.value}))}>
               {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="font-semibold">Selected Skills (tap to toggle):</div>
-            <div className="flex gap-1 flex-wrap">
-              {classSkills.map(sk => {
-                const on = selectedSkillIds.includes(sk.id);
-                return (
-                  <button
-                    key={sk.id}
-                    onClick={()=>toggleSel(sk.id)}
-                    className={clsx("px-2 py-1 rounded-full border text-xs", on ? "bg-slate-900 text-white border-slate-900" : "")}
-                    title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}
-                  >
-                    {sk.name}
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
           <label className="inline-flex items-center gap-2 text-sm">
             <input type="checkbox" className="accent-slate-900" checked={applyAll} onChange={e=>setApplyAll(e.target.checked)} />
             Apply to all selected
           </label>
+        </div>
+
+        {/* Selected Skills mapping (Left→Right) */}
+        <div className="border rounded-2xl p-2 bg-white">
+          <div className="text-sm font-semibold mb-2">Selected Skills (Left → Right):</div>
+          <div className="flex flex-wrap gap-2 items-center">
+            {selectedSkillIds.length === 0 && <Tiny>No skills selected.</Tiny>}
+            {selectedSkillIds.map((sid, i) => {
+              const sk = (state.skills||[]).find(s => s.id === sid);
+              return (
+                <span key={sid} className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-slate-50 text-sm">
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-900 text-white text-xs">{i+1}</span>
+                  <span className="truncate max-w-[220px]">{sk?.name}</span>
+                  <button className="text-slate-500" onClick={()=>setSelectedSkillIds(arr => arr.filter(x => x !== sid))} title="Remove">×</button>
+                </span>
+              );
+            })}
+            {classSkills.map(sk => {
+              const on = selectedSkillIds.includes(sk.id);
+              return (
+                <button key={sk.id} onClick={()=>toggleSel(sk.id)}
+                  className={clsx("px-3 py-1 rounded-full border text-sm", on ? "bg-slate-900 text-white border-slate-900" : "bg-white")}
+                  title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
+                  {on ? "✓ " : ""}{sk.name}
+                </button>
+              );
+            })}
+            {selectedSkillIds.length > 0 && (
+              <button className="ml-auto px-3 py-1 rounded-full border text-sm" onClick={()=>setSelectedSkillIds([])}>Clear all</button>
+            )}
+          </div>
         </div>
 
         <div>
@@ -914,35 +817,71 @@ export default function App(){
           ) : <Tiny>No class selected.</Tiny>}
         </div>
 
+        {/* Mode tips */}
         {selectedSkillIds.length === 0 && (
           <div className="text-xs text-slate-500">Tip: Choose 1 skill to tint the whole seat and tap to cycle. Choose 2–6 skills to see slices (click a slice to edit).</div>
         )}
         {selectedSkillIds.length === 1 && (
-          <div className="text-xs text-slate-500">Tip: Tap a seat to cycle this skill. Turn on “Apply to all selected” (not needed here) only when multiple skills are chosen.</div>
+          <div className="text-xs text-slate-500">Tip: Tap a seat to cycle this skill. “Apply to all selected” is only useful when multiple skills are chosen.</div>
         )}
         {selectedSkillIds.length >= 2 && !applyAll && (
-          <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that skill. Turn on “Apply to all selected” to set all slices at once.</div>
+          <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that specific skill. Turn on “Apply to all selected” to set the same level across all slices at once.</div>
         )}
         {selectedSkillIds.length >= 2 && applyAll && (
-          <div className="text-xs text-slate-500">Tip: Tap a seat to set the SAME level across all selected skills. (Slices still show H/D/P/A and separators.)</div>
+          <div className="text-xs text-slate-500">Tip: Tap a seat to set the SAME level across all selected skills for that student. (Slices are disabled in bulk mode.)</div>
         )}
       </div>
     );
   };
 
   const Student = () => {
-    const cls = currentClass;
-    const st = (cls?.students || []).find(s => s.id === state.selectedStudentId) || null;
-    if (!st) return <div className="p-4 text-slate-500 text-sm">No student selected.</div>;
-    const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls.id));
-    const evaluatedSkills = skills.filter(sk => getLevel(cls.marks, st.id, sk.id) != null);
+    // In-page Class & Student switchers
+    const classes = state.classes || [];
+    const [pageClassId, setPageClassId] = useState(state.selectedClassId || classes[0]?.id || "");
+    const cls = classes.find(c => c.id === pageClassId);
+    const students = cls?.students || [];
+
+    const [pageStudentId, setPageStudentId] = useState(state.selectedStudentId || students[0]?.id || "");
+    useEffect(()=>{
+      if (!students.find(s => s.id === pageStudentId)) {
+        setPageStudentId(students[0]?.id || "");
+      }
+    }, [pageClassId]);
+
+    const st = students.find(s => s.id === pageStudentId);
+    const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls?.id));
+    const evaluatedSkills = skills.filter(sk => getLevel(cls?.marks, st?.id, sk.id) != null);
+
+    const idx = students.findIndex(s => s.id === pageStudentId);
+    const goPrev = () => { if (idx > 0) setPageStudentId(students[idx-1].id); };
+    const goNext = () => { if (idx < students.length-1) setPageStudentId(students[idx+1].id); };
+
     return (
       <div className="p-3">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
+        <div className="max-w-6xl mx-auto flex items-center justify-between mb-2">
           <div className="text-lg font-semibold">Student Detail</div>
-          <Button onClick={()=>switchTab("Setup")}><Users size={16}/> Back to Setup</Button>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <div className="font-semibold">Class:</div>
+              <select className="border rounded-xl px-3 py-1" value={pageClassId} onChange={e=>setPageClassId(e.target.value)}>
+                {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="font-semibold">Student:</div>
+              <select className="border rounded-xl px-3 py-1" value={pageStudentId} onChange={e=>setPageStudentId(e.target.value)}>
+                {students.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button className="!px-2" onClick={goPrev}><ChevronLeft size={16}/></Button>
+              <Button className="!px-2" onClick={goNext}><ChevronRight size={16}/></Button>
+            </div>
+          </div>
         </div>
-        <StudentCard student={st} cls={cls} skills={evaluatedSkills} marks={cls.marks} />
+        {st && cls ? (
+          <StudentCard student={st} cls={cls} skills={evaluatedSkills} marks={cls.marks} />
+        ) : <Tiny>No student found in this class.</Tiny>}
       </div>
     );
   };
@@ -954,6 +893,53 @@ export default function App(){
     }, [state.selectedClassId]);
     const cls = (state.classes || []).find(c => c.id === selectedClassId);
     const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls?.id));
+
+    const [selected, setSelected] = useState([]);
+    const [sortKey, setSortKey] = useState("name");
+    const [sortDir, setSortDir] = useState("asc");
+
+    const toggleSel = (id) => {
+      setSelected((arr) => {
+        if (arr.includes(id)) return arr.filter(x => x !== id);
+        if (arr.length >= 6) return [...arr];
+        return [...arr, id];
+      });
+    };
+
+    const rows = (cls?.students || []).map(st => {
+      const cells = selected.map(sid => ({ sid, lv: getLevel(cls.marks, st.id, sid) }));
+      return { st, cells };
+    });
+
+    const cmp = (a, b) => {
+      if (sortKey === "name") {
+        const n1 = a.st.name.toLowerCase(), n2 = b.st.name.toLowerCase();
+        return sortDir === "asc" ? (n1 < n2 ? -1 : n1 > n2 ? 1 : 0) : (n1 > n2 ? -1 : n1 < n2 ? 1 : 0);
+      } else {
+        const sid = sortKey;
+        const l1 = a.cells.find(c=>c.sid===sid)?.lv ?? -1;
+        const l2 = b.cells.find(c=>c.sid===sid)?.lv ?? -1;
+        return sortDir === "asc" ? (l1 - l2) : (l2 - l1);
+      }
+    };
+
+    const sortedRows = [...rows].sort(cmp);
+
+    const headerClick = (key) => {
+      if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+      else { setSortKey(key); setSortDir("asc"); }
+    };
+
+    const cellBg = (lv) => {
+      switch (lv) {
+        case 0: return "#fecaca";
+        case 2: return "#fde68a";
+        case 3: return "#bbf7d0";
+        case 5: return "#e5e7eb";
+        default: return "#ffffff";
+      }
+    };
+
     return (
       <div className="p-3">
         <div className="max-w-6xl mx-auto flex items-center justify-between mb-2">
@@ -966,39 +952,80 @@ export default function App(){
             </select>
           </div>
         </div>
-        {cls ? <CompareTable cls={cls} skills={skills} marks={cls.marks} /> : <Tiny>Select a class.</Tiny>}
+
+        <div className="max-w-6xl mx-auto p-2 mb-2 border rounded-2xl">
+          <div className="flex flex-wrap gap-2">
+            {skills.map(sk => (
+              <button
+                key={sk.id}
+                onClick={()=>toggleSel(sk.id)}
+                className={clsx(
+                  "px-3 py-1 rounded-full border text-sm",
+                  selected.includes(sk.id) ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700"
+                )}
+                title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}
+              >
+                {sk.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {cls && selected.length > 0 ? (
+          <div className="max-w-6xl mx-auto overflow-auto border rounded-2xl">
+            <table className="w-full table-fixed">
+              <colgroup>
+                <col style={{width:"220px"}}/>
+                {selected.map((sid)=>(<col key={sid} style={{width:`${Math.max(120, Math.floor(800/selected.length))}px`}}/>))}
+              </colgroup>
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="text-left px-3 py-2 cursor-pointer" onClick={()=>headerClick("name")}>Student</th>
+                  {selected.map(sid => {
+                    const sk = skills.find(s => s.id === sid);
+                    return (
+                      <th
+                        key={sid}
+                        className="px-3 py-2 text-left cursor-pointer"
+                        onClick={()=>headerClick(sid)}
+                        title={(prettyStandard(sk?.standard) ? `${prettyStandard(sk?.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk?.standard)] || "")}
+                      >
+                        <div className="font-medium truncate">{sk?.name}</div>
+                        <div className="text-xs text-slate-500 truncate">
+                          {prettyStandard(sk?.standard)} {G7_STANDARDS[prettyStandard(sk?.standard)] ? `· ${G7_STANDARDS[prettyStandard(sk?.standard)]}` : ""}
+                        </div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.map(({st, cells}) => (
+                  <tr key={st.id} className="border-t">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="font-medium">{st.name}</div>
+                    </td>
+                    {cells.map(({sid, lv}) => (
+                      <td key={sid} className="px-3 py-2">
+                        <div className="h-6 rounded-md ring-1" style={{background: cellBg(lv), borderColor: "#e5e7eb"}} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-slate-500 text-sm max-w-6xl mx-auto">Pick up to six skills to compare.</div>
+        )}
       </div>
     );
   };
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b">
-        <div className="max-w-6xl mx-auto px-4 py-3 grid grid-cols-3 items-center">
-          {state.tab!=="Home" ? (
-            <div className="justify-self-start">
-              <button className="rounded-full border px-3 py-1 text-sm" onClick={()=>setLegendOpen(true)} title="Open legend">Legend</button>
-            </div>
-          ) : <div />}
-          <div className="justify-self-center text-center">
-            <div className="text-xl font-bold">Academic Monitoring</div>
-            <div className="mt-2 inline-flex items-center gap-2 rounded-full border bg-white p-1">
-              {["Home","Setup","Monitor","Compare"].map(t => (
-                <Pill key={t} active={state.tab===t} onClick={()=>switchTab(t)}>{t}</Pill>
-              ))}
-            </div>
-          </div>
-          <div className="justify-self-end flex items-center gap-2">
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer text-sm">
-              <Upload size={16}/> Import
-              <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
-            </label>
-            <Button icon={Download} onClick={exportJSON}>Export</Button>
-          </div>
-        </div>
-      </div>
-
-      <LegendFlyout open={legendOpen} onClose={()=>setLegendOpen(false)} />
+      <Header />
+      <LegendFlyout open={legendOpen && state.tab!=="Home"} onClose={()=>setLegendOpen(false)} />
 
       <main className="py-4">
         {state.tab === "Home" && <Home />}
