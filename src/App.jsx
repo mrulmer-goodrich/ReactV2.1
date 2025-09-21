@@ -71,11 +71,12 @@ const LEVELS = {
 const validLevels = [0,2,3,5];
 
 const FLAG_META = {
-  ml:      { label: "ML",        dot: "bg-sky-500" },
-  mlNew:   { label: "ML New",    dot: "bg-indigo-500" },
-  iep504:  { label: "IEP / 504", dot: "bg-purple-500" },
-  ec:      { label: "EC",        dot: "bg-orange-500" },
-  bubble:  { label: "Bubble",    dot: "bg-rose-500" },
+  ml:      { label: "ML",     dot: "bg-sky-500" },
+  mlNew:   { label: "ML New", dot: "bg-indigo-500" },
+  iep504:  { label: "IEP",    dot: "bg-purple-500" },
+  ec:      { label: "EC",     dot: "bg-orange-500" },
+  bubble:  { label: "Bubble", dot: "bg-rose-500" },
+  ca:      { label: "CA",     dot: "bg-gray-700" }, // Chronically Absent
 };
 const flagKeys = Object.keys(FLAG_META);
 
@@ -257,7 +258,7 @@ function normalizeState(input) {
 }
 
 // --------- Seat & Grid ---------
-function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode, allowSeatClick, applyAll}){
+function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode, allowSeatClick}){
   const isAbsent = singleMode && baseLevel === 5;
   const bgClass = isAbsent
     ? "bg-gray-100 border-gray-300"
@@ -268,20 +269,15 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
       className={clsx("relative rounded-xl border min-h-[78px] cursor-pointer select-none", bgClass)}
       onClick={allowSeatClick ? onSeatClick : undefined}
     >
-      {/* Multi-skill overlay slices (on top, clickable only when applyAll is OFF) */}
+     {/* Multi-skill overlay slices (on top, clickable) */}
       {slices && slices.length > 0 && (
-        <div
-          className={clsx(
-            "absolute inset-0 rounded-xl overflow-hidden flex z-10",
-            applyAll ? "pointer-events-none" : "pointer-events-auto"
-          )}
-        >
+      <div className="absolute inset-0 rounded-xl overflow-hidden flex z-10">
           {slices.map((sl, idx) => (
             <div
               key={idx}
-              className={clsx("h-full relative", applyAll ? "opacity-60 cursor-not-allowed" : "")}
+              className="h-full relative"
               style={{ width: `${100 / slices.length}%`, background: overlayColor(sl.level) }}
-              onClick={(e)=>{ if (applyAll) return; e.stopPropagation(); onSliceClick?.(idx); }}
+              onClick={(e)=>{ e.stopPropagation(); onSliceClick?.(idx); }}
               title={sl.title}
             >
               {/* bottom-centered tiny level letter */}
@@ -323,7 +319,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
   );
 }
 
-function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne, onCycleAll, applyAll}){
+function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne}){
   const rows = cls.rows || 4, cols = cls.cols || 9;
   const grid = Array.from({length: rows}).map((_,r)=> Array.from({length: cols}).map((__,c)=> cls.seats.find(s => s.r===r && s.c===c) || {r,c,studentId:null}));
   return (
@@ -339,11 +335,7 @@ function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne, onCycl
 
         const handleSeatClick = () => {
           if (!st) return;
-          if (applyAll && count >= 2) {
-            onCycleAll(st.id);
-          } else if (singleMode) {
-            onCycleOne(st.id, selectedSkillIds[0]);
-          }
+    if (singleMode) onCycleOne(st.id, selectedSkillIds[0]);
         };
 
         return (
@@ -354,10 +346,9 @@ function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne, onCycl
             flags={st?.flags}
             slices={slices}
             onSeatClick={handleSeatClick}
-            onSliceClick={(sliceIdx)=>{ if (!st || applyAll) return; const sid = selectedSkillIds[sliceIdx]; onCycleOne(st.id, sid); }}
+           onSliceClick={(sliceIdx)=>{ if (!st) return; const sid = selectedSkillIds[sliceIdx]; onCycleOne(st.id, sid); }}
             singleMode={singleMode}
-            allowSeatClick={(singleMode && !!selectedSkillIds[0]) || (applyAll && count >= 2)}
-            applyAll={applyAll}
+             allowSeatClick={singleMode && !!selectedSkillIds[0]}
           />
         );
       })}
@@ -434,7 +425,8 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
   const cls = currentClass;
   const classSkills = (state.skills || []).filter(sk => (sk.classIds?.includes(cls?.id)));
   const selectedSkillIds = state.monitorSelectedSkillIds || [];
-  const applyAll = !!state.monitorApplyAll;
+  const applyAll = !!state.monitorApplyAll; // legacy, no UI now
+  const [skillsOpen, setSkillsOpen] = useState(true);
 
   const setSelectedSkillIds = (updater) => {
     setState(s => {
@@ -478,42 +470,64 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
           </select>
         </div>
 
-        <label className="inline-flex items-center gap-2 text-sm">
-          <input type="checkbox" className="accent-slate-900" checked={applyAll} onChange={e=>setApplyAll(e.target.checked)} />
-          Apply to all selected
-        </label>
+        
       </div>
 
       {/* Selected Skills mapping (Left→Right) */}
-      <div className="border rounded-2xl p-2 bg-white">
-        <div className="text-sm font-semibold mb-2">Selected Skills (Left → Right):</div>
-        <div className="flex flex-wrap gap-2 items-center">
-          {selectedSkillIds.length === 0 && <Tiny>No skills selected.</Tiny>}
-          {selectedSkillIds.map((sid, i) => {
-            const sk = (state.skills||[]).find(s => s.id === sid);
-            return (
-              <span key={sid} className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-slate-50 text-sm">
-                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-900 text-white text-xs">{i+1}</span>
-                <span className="truncate max-w-[220px]">{sk?.name}</span>
-                <button className="text-slate-500" onClick={()=>setSelectedSkillIds(arr => arr.filter(x => x !== sid))} title="Remove">×</button>
-              </span>
-            );
-          })}
-          {classSkills.map(sk => {
-            const on = selectedSkillIds.includes(sk.id);
-            return (
-              <button key={sk.id} onClick={()=>toggleSel(sk.id)}
-                className={clsx("px-3 py-1 rounded-full border text-sm", on ? "bg-slate-900 text-white border-slate-900" : "bg-white")}
-                title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
-                {on ? "✓ " : ""}{sk.name}
-              </button>
-            );
-          })}
-          {selectedSkillIds.length > 0 && (
-            <button className="ml-auto px-3 py-1 rounded-full border text-sm" onClick={()=>setSelectedSkillIds([])}>Clear all</button>
-          )}
-        </div>
-      </div>
+<div className="border rounded-2xl p-2 bg-white">
+  <div className="flex items-center justify-between mb-2">
+    <div className="text-sm font-semibold">Selected Skills (Left → Right)</div>
+    <Button onClick={()=>setSkillsOpen(o=>!o)} className="!py-1 !px-2 text-xs">
+      {skillsOpen ? "Hide" : "Show"}
+    </Button>
+  </div>
+
+  {skillsOpen ? (
+    <div className="flex flex-wrap gap-2 items-center">
+      {selectedSkillIds.length === 0 && <Tiny>No skills selected.</Tiny>}
+      {selectedSkillIds.map((sid, i) => {
+        const sk = (state.skills||[]).find(s => s.id === sid);
+        return (
+          <span key={sid} className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-slate-50 text-sm">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-900 text-white text-xs">{i+1}</span>
+            <span className="truncate max-w-[220px]">{sk?.name}</span>
+            <button className="text-slate-500" onClick={()=>setSelectedSkillIds(arr => arr.filter(x => x !== sid))} title="Remove">×</button>
+          </span>
+        );
+      })}
+      {classSkills.map(sk => {
+        const on = selectedSkillIds.includes(sk.id);
+        return (
+          <button key={sk.id} onClick={()=>toggleSel(sk.id)}
+            className={clsx("px-3 py-1 rounded-full border text-sm", on ? "bg-slate-900 text-white border-slate-900" : "bg-white")}
+            title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
+            {on ? "✓ " : ""}{sk.name}
+          </button>
+        );
+      })}
+      {selectedSkillIds.length > 0 && (
+        <button className="ml-auto px-3 py-1 rounded-full border text-sm" onClick={()=>setSelectedSkillIds([])}>Clear all</button>
+      )}
+    </div>
+  ) : (
+    <div className="flex flex-wrap gap-2 items-center">
+      {selectedSkillIds.length === 0 ? (
+        <Tiny>No skills selected.</Tiny>
+      ) : (
+        selectedSkillIds.map((sid, i) => {
+          const sk = (state.skills||[]).find(s => s.id === sid);
+          return (
+            <span key={sid} className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border bg-white text-xs">
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-900 text-white text-[10px]">{i+1}</span>
+              <span className="truncate max-w-[140px]">{sk?.name}</span>
+            </span>
+          );
+        })
+      )}
+    </div>
+  )}
+</div>
+
 
       <div>
         {cls ? (
@@ -523,8 +537,7 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
             studentById={studentById}
             selectedSkillIds={selectedSkillIds}
             onCycleOne={cycleOne}
-            onCycleAll={cycleAll}
-            applyAll={applyAll}
+
           />
         ) : <Tiny>No class selected.</Tiny>}
       </div>
@@ -533,14 +546,11 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
       {selectedSkillIds.length === 0 && (
         <div className="text-xs text-slate-500">Tip: Choose 1 skill to tint the whole seat and tap to cycle. Choose 2–6 skills to see slices (click a slice to edit).</div>
       )}
-      {selectedSkillIds.length === 1 && (
-        <div className="text-xs text-slate-500">Tip: Tap a seat to cycle this skill. “Apply to all selected” is only useful when multiple skills are chosen.</div>
+    {selectedSkillIds.length === 1 && (
+        <div className="text-xs text-slate-500">Tip: Tap a seat to cycle this skill.</div>
       )}
-      {selectedSkillIds.length >= 2 && !applyAll && (
-        <div className="text-xs text-slate-500">Tip: Click each vertical slice to set that specific skill. Turn on “Apply to all selected” to set the same level across all slices at once.</div>
-      )}
-      {selectedSkillIds.length >= 2 && applyAll && (
-        <div className="text-xs text-slate-500">Tip: Tap a seat to advance all selected skills by one step for that student. (Slices are disabled in bulk mode.)</div>
+      {selectedSkillIds.length >= 2 && (
+        <div className="text-xs text-slate-500">Tip: Click each vertical slice to edit that specific skill.</div>
       )}
     </div>
   );
@@ -833,13 +843,18 @@ export default function App(){
                     {flagKeys.map(k => {
                       const on = !!st?.flags?.[k];
                       return (
-                        <button key={k}
-                          className={clsx("px-2 h-6 inline-flex items-center rounded-full border text-[11px] whitespace-normal leading-none",
-                            on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700")}
-                          onClick={()=>toggleFlag(st, k)}
-                          title={FLAG_META[k].label}>
-                          {FLAG_META[k].label}
-                        </button>
+                       <button
+  key={k}
+  className={clsx(
+    "px-2 h-6 inline-flex items-center rounded-full border text-[11px] whitespace-normal leading-none select-none",
+    on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700",
+    "cursor-default" // single taps do nothing
+  )}
+  onDoubleClick={()=>toggleFlag(st, k)}   // require double-tap/click
+  title={`${FLAG_META[k].label} — double-tap to toggle`}
+>
+  {FLAG_META[k].label}
+</button>
                       );
                     })}
                   </div>
@@ -942,74 +957,85 @@ export default function App(){
     );
   };
 
-  const Compare = () => {
-    const [selectedClassId, setSelectedClassId] = useState(state.selectedClassId || state.classes[0]?.id || "");
-    useEffect(()=>{
-      if (state.selectedClassId && state.selectedClassId !== selectedClassId) setSelectedClassId(state.selectedClassId);
-    }, [state.selectedClassId]);
-    const cls = (state.classes || []).find(c => c.id === selectedClassId);
-    const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls?.id));
+const Compare = () => {
+  const [selectedClassId, setSelectedClassId] = useState(state.selectedClassId || state.classes[0]?.id || "");
+  useEffect(()=>{
+    if (state.selectedClassId && state.selectedClassId !== selectedClassId) setSelectedClassId(state.selectedClassId);
+  }, [state.selectedClassId]);
 
-    const [selected, setSelected] = useState([]);
-    const [sortKey, setSortKey] = useState("name");
-    const [sortDir, setSortDir] = useState("asc");
+  const cls = (state.classes || []).find(c => c.id === selectedClassId);
+  const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls?.id));
 
-    const toggleSel = (id) => {
-      setSelected((arr) => {
-        if (arr.includes(id)) return arr.filter(x => x !== id);
-        if (arr.length >= 6) return [...arr];
-        return [...arr, id];
-      });
-    };
+  const [selected, setSelected] = useState([]);
+  const [skillsOpen, setSkillsOpen] = useState(true);
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
 
-    const rows = (cls?.students || []).map(st => {
-      const cells = selected.map(sid => ({ sid, lv: getLevel(cls.marks, st.id, sid) }));
-      return { st, cells };
+  const toggleSel = (id) => {
+    setSelected((arr) => {
+      if (arr.includes(id)) return arr.filter(x => x !== id);
+      if (arr.length >= 6) return [...arr];
+      return [...arr, id];
     });
+  };
 
-    const cmp = (a, b) => {
-      if (sortKey === "name") {
-        const n1 = a.st.name.toLowerCase(), n2 = b.st.name.toLowerCase();
-        return sortDir === "asc" ? (n1 < n2 ? -1 : n1 > n2 ? 1 : 0) : (n1 > n2 ? -1 : n1 < n2 ? 1 : 0);
-      } else {
-        const sid = sortKey;
-        const l1 = a.cells.find(c=>c.sid===sid)?.lv ?? -1;
-        const l2 = b.cells.find(c=>c.sid===sid)?.lv ?? -1;
-        return sortDir === "asc" ? (l1 - l2) : (l2 - l1);
-      }
-    };
+  const rows = (cls?.students || []).map(st => {
+    const cells = selected.map(sid => ({ sid, lv: getLevel(cls.marks, st.id, sid) }));
+    return { st, cells };
+  });
 
-    const sortedRows = [...rows].sort(cmp);
+  const cmp = (a, b) => {
+    if (sortKey === "name") {
+      const n1 = a.st.name.toLowerCase(), n2 = b.st.name.toLowerCase();
+      return sortDir === "asc" ? (n1 < n2 ? -1 : n1 > n2 ? 1 : 0) : (n1 > n2 ? -1 : n1 < n2 ? 1 : 0);
+    } else {
+      const sid = sortKey;
+      const l1 = a.cells.find(c=>c.sid===sid)?.lv ?? -1;
+      const l2 = b.cells.find(c=>c.sid===sid)?.lv ?? -1;
+      return sortDir === "asc" ? (l1 - l2) : (l2 - l1);
+    }
+  };
 
-    const headerClick = (key) => {
-      if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
-      else { setSortKey(key); setSortDir("asc"); }
-    };
+  const sortedRows = [...rows].sort(cmp);
 
-    const cellBg = (lv) => {
-      switch (lv) {
-        case 0: return "#fecaca";
-        case 2: return "#fde68a";
-        case 3: return "#bbf7d0";
-        case 5: return "#e5e7eb";
-        default: return "#ffffff";
-      }
-    };
+  const headerClick = (key) => {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("asc"); }
+  };
 
-    return (
-      <div className="p-3">
-        <div className="max-w-6xl mx-auto flex items-center justify-between mb-2">
+  const cellBg = (lv) => {
+    switch (lv) {
+      case 0: return "#fecaca";
+      case 2: return "#fde68a";
+      case 3: return "#bbf7d0";
+      case 5: return "#e5e7eb";
+      default: return "#ffffff";
+    }
+  };
+
+  return (
+    <div className="p-3">
+      <div className="max-w-6xl mx-auto flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
           <div className="text-lg font-semibold">Compare Skills</div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 ml-4">
             <div className="font-semibold">Class:</div>
-            <select className="border rounded-xl px-3 py-1" value={selectedClassId}
-              onChange={e => { setSelectedClassId(e.target.value); setState(s => ({...s, selectedClassId: e.target.value})); }}>
+            <select
+              className="border rounded-xl px-3 py-1 text-base font-medium"
+              value={selectedClassId}
+              onChange={e => { setSelectedClassId(e.target.value); setState(s => ({...s, selectedClassId: e.target.value})); }}
+            >
               {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
         </div>
+        <Button onClick={()=>setSkillsOpen(o=>!o)} className="!py-1 !px-2 text-xs">
+          {skillsOpen ? "Hide skills" : "Show skills"}
+        </Button>
+      </div>
 
-        <div className="max-w-6xl mx-auto p-2 mb-2 border rounded-2xl">
+      <div className="max-w-6xl mx-auto p-2 mb-2 border rounded-2xl">
+        {skillsOpen ? (
           <div className="flex flex-wrap gap-2">
             {skills.map(sk => (
               <button
@@ -1025,58 +1051,73 @@ export default function App(){
               </button>
             ))}
           </div>
-        </div>
-
-        {cls && selected.length > 0 ? (
-          <div className="max-w-6xl mx-auto overflow-auto border rounded-2xl">
-            <table className="w-full table-fixed">
-              <colgroup>
-                <col style={{width:"220px"}}/>
-                {selected.map((sid)=>(<col key={sid} style={{width:`${Math.max(120, Math.floor(800/selected.length))}px`}}/>))}
-              </colgroup>
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="text-left px-3 py-2 cursor-pointer" onClick={()=>headerClick("name")}>Student</th>
-                  {selected.map(sid => {
-                    const sk = skills.find(s => s.id === sid);
-                    return (
-                      <th
-                        key={sid}
-                        className="px-3 py-2 text-left cursor-pointer"
-                        onClick={()=>headerClick(sid)}
-                        title={(prettyStandard(sk?.standard) ? `${prettyStandard(sk?.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk?.standard)] || "")}
-                      >
-                        <div className="font-medium truncate">{sk?.name}</div>
-                        <div className="text-xs text-slate-500 truncate">
-                          {prettyStandard(sk?.standard)} {G7_STANDARDS[prettyStandard(sk?.standard)] ? `· ${G7_STANDARDS[prettyStandard(sk?.standard)]}` : ""}
-                        </div>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRows.map(({st, cells}) => (
-                  <tr key={st.id} className="border-t">
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="font-medium">{st.name}</div>
-                    </td>
-                    {cells.map(({sid, lv}) => (
-                      <td key={sid} className="px-3 py-2">
-                        <div className="h-6 rounded-md ring-1" style={{background: cellBg(lv), borderColor: "#e5e7eb"}} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         ) : (
-          <div className="text-slate-500 text-sm max-w-6xl mx-auto">Pick up to six skills to compare.</div>
+          <div className="flex flex-wrap gap-2">
+            {selected.length === 0
+              ? <Tiny>No skills selected.</Tiny>
+              : selected.map((sid, i) => {
+                  const sk = skills.find(s => s.id === sid);
+                  return (
+                    <span key={sid} className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border bg-white text-xs">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-900 text-white text-[10px]">{i+1}</span>
+                      <span className="truncate max-w-[160px]">{sk?.name}</span>
+                    </span>
+                  );
+                })}
+          </div>
         )}
       </div>
-    );
-  };
+
+      {cls && selected.length > 0 ? (
+        <div className="max-w-6xl mx-auto overflow-auto border rounded-2xl">
+          <table className="w-full table-fixed">
+            <colgroup>
+              <col style={{width:"220px"}}/>
+              {selected.map((sid)=>(<col key={sid} style={{width:`${Math.max(120, Math.floor(800/selected.length))}px`}}/>))}
+            </colgroup>
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="text-left px-3 py-2 cursor-pointer" onClick={()=>headerClick("name")}>Student</th>
+                {selected.map(sid => {
+                  const sk = skills.find(s => s.id === sid);
+                  return (
+                    <th
+                      key={sid}
+                      className="px-3 py-2 text-left cursor-pointer"
+                      onClick={()=>headerClick(sid)}
+                      title={(prettyStandard(sk?.standard) ? `${prettyStandard(sk?.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk?.standard)] || "")}
+                    >
+                      <div className="font-medium truncate">{sk?.name}</div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {prettyStandard(sk?.standard)} {G7_STANDARDS[prettyStandard(sk?.standard)] ? `· ${G7_STANDARDS[prettyStandard(sk?.standard)]}` : ""}
+                      </div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map(({st, cells}) => (
+                <tr key={st.id} className="border-t">
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <div className="font-medium">{st.name}</div>
+                  </td>
+                  {cells.map(({sid, lv}) => (
+                    <td key={sid} className="px-3 py-2">
+                      <div className="h-6 rounded-md ring-1" style={{background: cellBg(lv), borderColor: "#e5e7eb"}} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="text-slate-500 text-sm max-w-6xl mx-auto">Pick up to six skills to compare.</div>
+      )}
+    </div>
+  );
+};
 
   return (
     <div className="min-h-screen bg-slate-50">
