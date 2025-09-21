@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download, Upload, Plus, Pencil, Users, Home as HomeIcon,
   ListChecks, GraduationCap, Trash2, Wrench, X as XIcon, Check, XCircle, ChevronLeft, ChevronRight
@@ -344,19 +344,26 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
         </div>
       )}
 
-      {/* Name + flags — non-interactive so slices/seat receive clicks */}
-      <div className="relative p-2 h-full pointer-events-none">
-        <div className="absolute inset-0 flex items-center justify-center px-2">
-          <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
+      {/* Name + flags */}
+      <div className="relative p-2 h-full pointer-events-none grid">
+        {/* Centered name */}
+        <div className="place-self-center px-2 text-center">
+          <div className="font-medium text-slate-800 leading-tight line-clamp-2">
             {student?.name || "—"}
           </div>
         </div>
+
+        {/* Flags */}
         <div className="absolute left-2 bottom-2 flex gap-1 flex-wrap max-w-[70%]">
           {flagKeys.filter(k => flags?.[k]).map(k => <Dot key={k} className={FLAG_META[k].dot} />)}
         </div>
+
+        {/* Level badge (single mode only) */}
         {singleMode && baseLevel!=null && (
-          <div className={clsx("absolute right-2 bottom-2 px-2 py-0.5 rounded-full text-[10px] ring-1",
-            LEVELS[baseLevel].ring, LEVELS[baseLevel].bg, LEVELS[baseLevel].text)}>
+          <div className={clsx(
+            "absolute right-2 bottom-2 px-2 py-0.5 rounded-full text-[10px] ring-1",
+            LEVELS[baseLevel].ring, LEVELS[baseLevel].bg, LEVELS[baseLevel].text
+          )}>
             {LEVELS[baseLevel].name}
           </div>
         )}
@@ -364,6 +371,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
     </div>
   );
 }
+
 
 /**
  * SeatGrid — supports:
@@ -375,11 +383,12 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
  */
 function SeatGrid({
   cls, marks, studentById, selectedSkillIds, onCycleOne,
-  seatMode, layoutMode, activeStudentId, onUpdateSeats, onSelectSeat, selectedSeatId
+  seatMode, layoutMode, onUpdateSeats, onSelectSeat, selectedSeatId, onRequestAssign
 }){
   const rows = cls.rows || 4, cols = cls.cols || 9;
   const SEAT_W = 110, SEAT_H = 78, GAP = 8;
   const SNAP_X = SEAT_W + GAP, SNAP_Y = SEAT_H + GAP;
+  const DRAG_THRESHOLD = 6;
 
   const setSeats = (updater) => onUpdateSeats(updater);
   const indexOfStudent = (sid) => (cls.seats || []).findIndex(s => s.studentId === sid);
@@ -392,25 +401,6 @@ function SeatGrid({
     next[i] = a; next[j] = b;
     return next;
   });
-
-  const [swapIdx, setSwapIdx] = useState(null);
-
-  // drag for FREE/SNAP
-  const onDragSeat = (idx, dx, dy, done=false) => {
-    setSeats(seats => {
-      const next = seats.slice();
-      const s = {...next[idx]};
-      const nx = s.x + dx, ny = s.y + dy;
-      if (layoutMode === "snap" && done) {
-        s.x = Math.round(nx / SNAP_X) * SNAP_X;
-        s.y = Math.round(ny / SNAP_Y) * SNAP_Y;
-      } else {
-        s.x = nx; s.y = ny;
-      }
-      next[idx] = s;
-      return next;
-    });
-  };
 
   // GRID layout (CSS grid, r/c based)
   if (layoutMode === "grid") {
@@ -434,28 +424,16 @@ function SeatGrid({
 
           const handleClick = () => {
             onSelectSeat?.(seat.id); // for Rotate button
-            if (seatMode==="assign" && activeStudentId) {
-              if (realIdx < 0) return; // ignore ghosts (shouldn't happen if normalized)
-              const from = indexOfStudent(activeStudentId);
-              setSeats(seats => {
-                const next = seats.slice();
-                const target = {...next[realIdx]};
-                const oldOccupant = target.studentId;
-                target.studentId = activeStudentId;
-                next[realIdx] = target;
-                if (from >= 0 && from !== realIdx) {
-                  const origin = {...next[from]};
-                  origin.studentId = oldOccupant || null; // swap if occupied
-                  next[from] = origin;
-                }
-                return next;
-              });
+            if (seatMode==="assign") {
+              if (realIdx < 0) return;
+              onRequestAssign?.(seat.id);
               return;
             }
             if (seatMode==="swap") {
               if (realIdx==null || realIdx<0) return;
-              if (swapIdx==null) setSwapIdx(realIdx);
-              else { swapByIndex(swapIdx, realIdx); setSwapIdx(null); }
+              // use dataset on SeatGrid? We keep swap state in parent? Keep simple: do inline 2-click swap here
+              // For grid we’ll swap immediately with previous selection; use a static variable closure
+              SeatGrid._swapIdx = (SeatGrid._swapIdx==null) ? realIdx : (swapByIndex(SeatGrid._swapIdx, realIdx), SeatGrid._swapIdx=null, null);
               return;
             }
             if (seatMode==="view" && singleView && st) onCycleOne(st.id, selectedSkillIds[0]);
@@ -488,10 +466,44 @@ function SeatGrid({
     );
   }
 
-  // FREE / SNAP (absolute positioning + drag)
+  // ===== FREE / SNAP (absolute positioning + drag with threshold + clamping) =====
+  const boardRef = useRef(null);
+
+  const seatsArr = cls.seats || [];
+  const maxY = seatsArr.length ? Math.max(...seatsArr.map(s => s.y || 0)) : 0;
+  const boardHeight = Math.max(rows*(SEAT_H+GAP), maxY + SEAT_H + GAP);
+
+  const onDragSeat = (idx, dx, dy, done=false, rect=null) => {
+    setSeats(seats => {
+      const next = seats.slice();
+      const s = {...next[idx]};
+      let nx = s.x + dx, ny = s.y + dy;
+
+      // Snap first if releasing
+      if (layoutMode === "snap" && done) {
+        nx = Math.round(nx / SNAP_X) * SNAP_X;
+        ny = Math.round(ny / SNAP_Y) * SNAP_Y;
+      }
+
+      // Clamp to board bounds
+      const maxX = Math.max(0, (rect?.width ?? 1000) - SEAT_W);
+      const maxYb = Math.max(0, (rect?.height ?? boardHeight) - SEAT_H);
+      nx = Math.min(Math.max(0, nx), maxX);
+      ny = Math.min(Math.max(0, ny), maxYb);
+
+      s.x = nx; s.y = ny;
+      next[idx] = s;
+      return next;
+    });
+  };
+
   return (
-    <div className="relative border rounded-2xl bg-white" style={{minHeight: (rows * (SEAT_H+GAP)) + 40}}>
-      {(cls.seats||[]).map((seat, idx) => {
+    <div
+      ref={boardRef}
+      className="relative border rounded-2xl bg-white overflow-hidden"
+      style={{minHeight: boardHeight}}
+    >
+      {seatsArr.map((seat, idx) => {
         const st = studentById(seat.studentId);
         const count = selectedSkillIds?.length || 0;
         const singleView = (seatMode==="view" && count===1);
@@ -503,39 +515,37 @@ function SeatGrid({
         const onPointerDown = (e) => {
           if (seatMode!=="move") return;
           onSelectSeat?.(seat.id);
+          const rect = boardRef.current?.getBoundingClientRect();
           const startX = e.clientX, startY = e.clientY;
-          const move = (ev) => onDragSeat(idx, ev.clientX - startX, ev.clientY - startY, false);
+          let started = false;
+
+          const move = (ev) => {
+            const dx = ev.clientX - startX;
+            const dy = ev.clientY - startY;
+            if (!started) {
+              if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+              started = true;
+            }
+            onDragSeat(idx, dx, dy, false, rect);
+          };
           const up = (ev) => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
-            onDragSeat(idx, ev.clientX - startX, ev.clientY - startY, true); // snap if needed
+            if (!started) return;
+            onDragSeat(idx, ev.clientX - startX, ev.clientY - startY, true, rect);
           };
-          window.addEventListener("pointermove", move);
-          window.addEventListener("pointerup", up, {once:true});
+          window.addEventListener("pointermove", move, { passive: true });
+          window.addEventListener("pointerup", up, { once: true });
         };
 
         const handleClick = () => {
           onSelectSeat?.(seat.id);
-          if (seatMode==="assign" && activeStudentId) {
-            const from = indexOfStudent(activeStudentId);
-            setSeats(seats => {
-              const next = seats.slice();
-              const target = {...next[idx]};
-              const oldOccupant = target.studentId;
-              target.studentId = activeStudentId;
-              next[idx] = target;
-              if (from >= 0 && from !== idx) {
-                const origin = {...next[from]};
-                origin.studentId = oldOccupant || null; // swap if occupied
-                next[from] = origin;
-              }
-              return next;
-            });
+          if (seatMode==="assign") {
+            onRequestAssign?.(seat.id);
             return;
           }
           if (seatMode==="swap") {
-            if (swapIdx==null) setSwapIdx(idx);
-            else { swapByIndex(swapIdx, idx); setSwapIdx(null); }
+            SeatGrid._swapIdx = (SeatGrid._swapIdx==null) ? idx : (swapByIndex(SeatGrid._swapIdx, idx), SeatGrid._swapIdx=null, null);
             return;
           }
           if (seatMode==="view" && singleView && st) onCycleOne(st.id, selectedSkillIds[0]);
@@ -555,7 +565,7 @@ function SeatGrid({
             key={seat.id || idx}
             onPointerDown={onPointerDown}
             onClick={handleClick}
-            className={clsx("absolute rounded-xl", ring)}
+            className={clsx("absolute rounded-xl touch-none", ring)}
             style={{
               left: seat.x, top: seat.y, width: SEAT_W, height: SEAT_H,
               transform: `rotate(${seat.rot||0}deg)`,
@@ -577,6 +587,7 @@ function SeatGrid({
     </div>
   );
 }
+
 
 /* ===================== STUDENT DETAILS ===================== */
 function StudentCard({student, cls, skills, marks}){
@@ -649,12 +660,13 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
   const selectedSkillIds = state.monitorSelectedSkillIds || [];
   const [skillsOpen, setSkillsOpen] = useState(true);
 
-  // NEW seating & layout controls
+  // Seating & layout controls
   const [seatMode, setSeatMode] = useState("view");  // "view" | "assign" | "swap" | "move"
-  const [activeStudentId, setActiveStudentId] = useState(""); // for Assign mode
   const [selectedSeatId, setSelectedSeatId] = useState(null); // for Rotate button
 
-  // persist the selected skill set in app state (already persisted)
+  // Assign modal (opens when clicking a seat in Assign mode)
+  const [assignSeatId, setAssignSeatId] = useState(null);
+
   const setSelectedSkillIds = (updater) => {
     setState(s => {
       const current = s.monitorSelectedSkillIds || [];
@@ -688,6 +700,101 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
     }));
   };
 
+  const seatIndexById = (sid) => (cls?.seats || []).findIndex(s => s.id === sid);
+
+  // Apply assignment from modal (assign or unassign)
+  const applyAssignToSeat = (seatId, studentId /* or null to unassign */) => {
+    const idx = seatIndexById(seatId);
+    if (idx < 0) return;
+    if (studentId == null) {
+      // Unassign
+      onUpdateSeats(seats => {
+        const next = seats.slice();
+        next[idx] = {...next[idx], studentId: null};
+        return next;
+      });
+      return;
+    }
+    // Assign (swap if student already seated)
+    onUpdateSeats(seats => {
+      const next = seats.slice();
+      const target = {...next[idx]};
+      const oldOccupant = target.studentId;
+      target.studentId = studentId;
+      next[idx] = target;
+
+      const from = next.findIndex(s => s.studentId === studentId && s.id !== target.id);
+      if (from >= 0) {
+        const origin = {...next[from]};
+        origin.studentId = oldOccupant || null;
+        next[from] = origin;
+      }
+      return next;
+    });
+  };
+
+  // Assign dialog UI
+  const AssignDialog = () => {
+    if (!assignSeatId || !cls) return null;
+    const seat = cls.seats.find(s => s.id === assignSeatId);
+    const occupant = seat?.studentId ? studentById(seat.studentId) : null;
+    const assignedIds = new Set((cls.seats||[]).map(s => s.studentId).filter(Boolean));
+
+    return (
+      <Modal
+        open={true}
+        title="Assign Student to Seat"
+        onClose={()=>setAssignSeatId(null)}
+      >
+        <div className="space-y-3">
+          <div className="text-sm text-slate-600">
+            {occupant ? <>Current: <b>{occupant.name}</b></> : "Seat is empty."}
+          </div>
+
+          <div className="max-h-72 overflow-auto border rounded-xl p-2">
+            {(cls.students||[]).map(st => {
+              const isAssigned = assignedIds.has(st.id);
+              return (
+                <button
+                  key={st.id}
+                  onClick={()=>{
+                    applyAssignToSeat(assignSeatId, st.id);
+                    setAssignSeatId(null);
+                  }}
+                  className={clsx(
+                    "w-full text-left px-3 py-2 rounded-lg border mb-1 hover:shadow-sm",
+                    isAssigned ? "opacity-60" : "opacity-100",
+                    "bg-white"
+                  )}
+                  title={isAssigned ? "Already seated (click to move/swap here)" : "Click to assign"}
+                >
+                  <div className="font-medium">{st.name}</div>
+                  {isAssigned && <div className="text-xs text-slate-500">already seated</div>}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div />
+            <div className="flex gap-2">
+              <Button onClick={()=>setAssignSeatId(null)}><XCircle size={16}/> Cancel</Button>
+              <Button
+                onClick={()=>{
+                  applyAssignToSeat(assignSeatId, null);
+                  setAssignSeatId(null);
+                }}
+                title="Remove whoever is currently in this seat"
+              >
+                Unassign Seat
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    );
+  };
+
   return (
     <div className="max-w-6xl mx-auto p-4 space-y-3">
       {/* Top row: Class picker */}
@@ -700,7 +807,7 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
         </div>
       </div>
 
-      {/* NEW: Seating & Layout toolbar */}
+      {/* Seating & Layout toolbar (no dropdown now) */}
       <div className="flex items-center gap-2 flex-wrap border rounded-2xl p-2 bg-white">
         <div className="text-sm font-semibold">Seating:</div>
         {["view","assign","swap","move"].map(m => (
@@ -724,17 +831,6 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
             {m[0].toUpperCase()+m.slice(1)}
           </Pill>
         ))}
-
-        {seatMode==="assign" && (
-          <select
-            className="ml-2 border rounded-xl px-2 py-1 text-sm"
-            value={activeStudentId}
-            onChange={e=>setActiveStudentId(e.target.value)}
-          >
-            <option value="">(Pick student)</option>
-            {(currentClass?.students||[]).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        )}
 
         <div className="mx-2 h-5 w-px bg-slate-200" />
 
@@ -820,18 +916,17 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
             studentById={studentById}
             selectedSkillIds={selectedSkillIds}
             onCycleOne={cycleOne}
-            // NEW props:
             seatMode={seatMode}
             layoutMode={currentClass.layoutMode}
-            activeStudentId={activeStudentId}
             onUpdateSeats={onUpdateSeats}
             onSelectSeat={setSelectedSeatId}
             selectedSeatId={selectedSeatId}
+            onRequestAssign={(seatId)=>setAssignSeatId(seatId)}
           />
         ) : <Tiny>No class selected.</Tiny>}
       </div>
 
-      {/* Mode tips */}
+      {/* Tips */}
       {selectedSkillIds.length === 0 && (
         <div className="text-xs text-slate-500">Tip: Choose 1 skill to tint the whole seat and tap to cycle. Choose 2–6 skills to see slices (click a slice to edit).</div>
       )}
@@ -842,20 +937,24 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
         <div className="text-xs text-slate-500">Tip: Click each vertical slice to edit that specific skill.</div>
       )}
       {seatMode==="assign" && (
-        <div className="text-xs text-slate-500">Assign: pick a student, then click a seat to place or swap.</div>
+        <div className="text-xs text-slate-500">Assign: click a seat to open the picker. Already-seated names are grayed (clicking them moves/swaps here). Use “Unassign Seat” to empty a seat.</div>
       )}
       {seatMode==="swap" && (
         <div className="text-xs text-slate-500">Swap: click the first seat, then the second seat.</div>
       )}
       {seatMode==="move" && currentClass?.layoutMode!=="grid" && (
-        <div className="text-xs text-slate-500">Move: drag seats. In “Snap” layout, seats snap to an invisible grid when released.</div>
+        <div className="text-xs text-slate-500">Move: drag seats. Small jitters are ignored; seats are clamped within the board. In “Snap” layout, seats snap when released.</div>
       )}
       {seatMode==="move" && currentClass?.layoutMode==="grid" && (
         <div className="text-xs text-slate-500">Grid layout uses row/column positions. Switch to Free or Snap to drag seats freely.</div>
       )}
+
+      {/* Assign modal */}
+      <AssignDialog />
     </div>
   );
 }
+
 
 /* ===================== SAVE TO CLOUD (dummy POST) ===================== */
 function SaveToCloud({ state }) {
