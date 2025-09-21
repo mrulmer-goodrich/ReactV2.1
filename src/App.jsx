@@ -5,14 +5,18 @@ import {
 } from "lucide-react";
 
 /* ---------------------------------------------------------
-   Academic Monitoring — v10.7 (FULL)
-   - FIX: Slice taps now work (slices are on top and receive clicks; name layer ignores clicks).
-   - FIX: Apply-to-all = "advance each selected skill independently by one step" (no syncing to same level).
-   - Persist Monitor selections in App state (from v10.6) so nothing resets visually.
+   Academic Monitoring — v11.0
+   - Seating modes: View / Assign / Swap / Move
+   - Layout modes: Grid / Free / Snap-to-grid
+   - Seat rotation (90° steps)
+   - Slices stay clickable; skill data persists by student regardless of seat
+   - normalizeState now gives each seat an id + x,y + rot and preserves r,c
+   - Cleaned: removed legacy applyAll / setApplyAll / cycleAll
    --------------------------------------------------------- */
 
 const lsKey = "seating-monitor-v7-1";
 
+/* ===================== BASE STATE ===================== */
 const blankState = {
   tab: "Home",
   classes: [],
@@ -21,10 +25,11 @@ const blankState = {
   selectedSkillId: null, // used by Compare defaults
   selectedStudentId: null,
   editAssignMode: "assign",
-  monitorSelectedSkillIds: [],
-  monitorApplyAll: false
+  monitorSelectedSkillIds: [], // persisted monitor selection
+  // monitorApplyAll removed (legacy)
 };
 
+/* ===================== TAXONOMY ===================== */
 const G7_DOMAINS = [
   { id: "",   name: "(Optional)" },
   { id: "RP", name: "Ratios & Proportions" },
@@ -62,6 +67,7 @@ function prettyStandard(stdCode) {
   return String(stdCode).replace(/^NC\.7\./i, "");
 }
 
+/* ===================== DISPLAY LEVELS ===================== */
 const LEVELS = {
   0: { name: "Help",        bg: "bg-rose-100",    ring: "ring-rose-300",    text: "text-rose-800" },
   2: { name: "Developing",  bg: "bg-amber-100",   ring: "ring-amber-300",   text: "text-amber-800" },
@@ -80,7 +86,7 @@ const FLAG_META = {
 };
 const flagKeys = Object.keys(FLAG_META);
 
-// --------- helpers ---------
+/* ===================== HELPERS ===================== */
 function cryptoRandomId(){ return Math.random().toString(36).slice(2,10); }
 function clsx(...a){ return a.filter(Boolean).join(" "); }
 function Tiny({children}){ return <span className="text-[12px] text-slate-500">{children}</span>; }
@@ -113,7 +119,7 @@ function overlayColor(lv){
   }
 }
 
-// --------- UI atoms ---------
+/* ===================== UI PRIMITIVES ===================== */
 function Button({icon:Icon, children, onClick, className="", title, type="button"}){
   return (
     <button
@@ -196,26 +202,66 @@ function LegendFlyout({open, onClose}){
   );
 }
 
-// --------- normalize & storage ---------
+/* ===================== NORMALIZE & STORAGE ===================== */
 function normalizeState(input) {
   const s = JSON.parse(JSON.stringify(input || {}));
   if (!Array.isArray(s.classes)) s.classes = [];
   if (!Array.isArray(s.skills)) s.skills = [];
   if (!s.tab) s.tab = "Home";
   if (!Array.isArray(s.monitorSelectedSkillIds)) s.monitorSelectedSkillIds = [];
-  if (typeof s.monitorApplyAll !== "boolean") s.monitorApplyAll = false;
 
-  s.classes = s.classes.map((c, idx) => ({
-    id: c.id || `class-${idx}`,
-    name: c.name || `Block ${idx+1}`,
-    rows: c.rows ?? 4,
-    cols: c.cols ?? 9,
-    layoutMode: c.layoutMode || "grid",
-    seats: Array.isArray(c.seats) ? c.seats : [],
-    students: Array.isArray(c.students) ? c.students : [],
-    marks: c.marks || {},
-  }));
+  // constants for seat sizing + spacing used for default XY placement
+  const SEAT_W = 110, SEAT_H = 78, GAP = 8;
 
+  s.classes = s.classes.map((c, idx) => {
+    // normalize base class fields
+    const cls = {
+      id: c.id || `class-${idx}`,
+      name: c.name || `Block ${idx+1}`,
+      rows: c.rows ?? 4,
+      cols: c.cols ?? 9,
+      layoutMode: c.layoutMode || "grid", // "grid" | "free" | "snap"
+      seats: Array.isArray(c.seats) ? c.seats : [],
+      students: Array.isArray(c.students) ? c.students : [],
+      marks: c.marks || {},
+    };
+
+    // ensure seats array exists for grid (autofill full grid if empty)
+    if (!cls.seats || cls.seats.length === 0) {
+      const seats = [];
+      for (let r=0; r<cls.rows; r++){
+        for (let c=0; c<cls.cols; c++){
+          seats.push({
+            id: `seat-${r}-${c}`,
+            r, c,
+            x: c * (SEAT_W + GAP),
+            y: r * (SEAT_H + GAP),
+            rot: 0,
+            studentId: null,
+          });
+        }
+      }
+      cls.seats = seats;
+    } else {
+      // normalize each existing seat
+      cls.seats = cls.seats.map((seat, i) => {
+        const hasGrid = Number.isInteger(seat?.r) && Number.isInteger(seat?.c);
+        return {
+          id: seat.id || `seat-${i}`,
+          r: hasGrid ? seat.r : (Number.isInteger(seat?.r) ? seat.r : null),
+          c: hasGrid ? seat.c : (Number.isInteger(seat?.c) ? seat.c : null),
+          x: Number.isFinite(seat?.x) ? seat.x : (hasGrid ? seat.c * (SEAT_W + GAP) : 0),
+          y: Number.isFinite(seat?.y) ? seat.y : (hasGrid ? seat.r * (SEAT_H + GAP) : 0),
+          rot: Number.isFinite(seat?.rot) ? seat.rot : 0,
+          studentId: seat?.studentId ?? null,
+        };
+      });
+    }
+
+    return cls;
+  });
+
+  // convert marks from nested or 1/4 legacy to flattened 0/2/3/5
   s.classes.forEach(cls => {
     const marks = cls.marks || {};
     let flattened = {};
@@ -257,7 +303,7 @@ function normalizeState(input) {
   return s;
 }
 
-// --------- Seat & Grid ---------
+/* ===================== SEAT & GRID ===================== */
 function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode, allowSeatClick}){
   const isAbsent = singleMode && baseLevel === 5;
   const bgClass = isAbsent
@@ -269,9 +315,9 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
       className={clsx("relative rounded-xl border min-h-[78px] cursor-pointer select-none", bgClass)}
       onClick={allowSeatClick ? onSeatClick : undefined}
     >
-     {/* Multi-skill overlay slices (on top, clickable) */}
+      {/* Multi-skill overlay slices (on top, clickable) */}
       {slices && slices.length > 0 && (
-      <div className="absolute inset-0 rounded-xl overflow-hidden flex z-10">
+        <div className="absolute inset-0 rounded-xl overflow-hidden flex z-10">
           {slices.map((sl, idx) => (
             <div
               key={idx}
@@ -298,7 +344,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
         </div>
       )}
 
-      {/* Name + flags — make this non-interactive so slices/seat receive clicks */}
+      {/* Name + flags — non-interactive so slices/seat receive clicks */}
       <div className="relative p-2 h-full pointer-events-none">
         <div className="absolute inset-0 flex items-center justify-center px-2">
           <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
@@ -319,44 +365,220 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
   );
 }
 
-function SeatGrid({cls, marks, studentById, selectedSkillIds, onCycleOne}){
+/**
+ * SeatGrid — supports:
+ * - seatMode: "view" | "assign" | "swap" | "move"
+ * - layoutMode: "grid" (r/c CSS grid) | "free" (absolute XY) | "snap" (absolute XY, snap on release)
+ * - activeStudentId (Assign mode picker)
+ * - onUpdateSeats(updater) to mutate current class seats in App state
+ * - onSelectSeat(seatId) to select a seat (e.g., for Rotate button)
+ */
+function SeatGrid({
+  cls, marks, studentById, selectedSkillIds, onCycleOne,
+  seatMode, layoutMode, activeStudentId, onUpdateSeats, onSelectSeat, selectedSeatId
+}){
   const rows = cls.rows || 4, cols = cls.cols || 9;
-  const grid = Array.from({length: rows}).map((_,r)=> Array.from({length: cols}).map((__,c)=> cls.seats.find(s => s.r===r && s.c===c) || {r,c,studentId:null}));
+  const SEAT_W = 110, SEAT_H = 78, GAP = 8;
+  const SNAP_X = SEAT_W + GAP, SNAP_Y = SEAT_H + GAP;
+
+  const setSeats = (updater) => onUpdateSeats(updater);
+  const indexOfStudent = (sid) => (cls.seats || []).findIndex(s => s.studentId === sid);
+
+  const swapByIndex = (i, j) => setSeats(seats => {
+    if (i<0 || j<0 || i===j) return seats;
+    const next = seats.slice();
+    const a = {...next[i]}, b = {...next[j]};
+    [a.studentId, b.studentId] = [b.studentId, a.studentId];
+    next[i] = a; next[j] = b;
+    return next;
+  });
+
+  const [swapIdx, setSwapIdx] = useState(null);
+
+  // drag for FREE/SNAP
+  const onDragSeat = (idx, dx, dy, done=false) => {
+    setSeats(seats => {
+      const next = seats.slice();
+      const s = {...next[idx]};
+      const nx = s.x + dx, ny = s.y + dy;
+      if (layoutMode === "snap" && done) {
+        s.x = Math.round(nx / SNAP_X) * SNAP_X;
+        s.y = Math.round(ny / SNAP_Y) * SNAP_Y;
+      } else {
+        s.x = nx; s.y = ny;
+      }
+      next[idx] = s;
+      return next;
+    });
+  };
+
+  // GRID layout (CSS grid, r/c based)
+  if (layoutMode === "grid") {
+    const grid = Array.from({length: rows}).map((_,r)=>
+      Array.from({length: cols}).map((__,c)=>
+        cls.seats.find(s => s.r===r && s.c===c) || {__ghost:true, id:`ghost-${r}-${c}`, r,c,studentId:null}
+      )
+    );
+
+    return (
+      <div className="grid gap-2" style={{gridTemplateColumns: `repeat(${cols}, minmax(${SEAT_W}px, 1fr))`}}>
+        {grid.flat().map((seat, i) => {
+          const realIdx = cls.seats.findIndex(s => s.r===seat.r && s.c===seat.c);
+          const st = studentById(seat.studentId);
+          const count = selectedSkillIds?.length || 0;
+          const singleView = (seatMode==="view" && count===1);
+          const baseLevel = (st && singleView) ? getLevel(marks, st.id, selectedSkillIds[0]) : null;
+          const slices = (st && seatMode==="view" && count>=2)
+            ? selectedSkillIds.map(sid => ({ skillId: sid, level: getLevel(marks, st.id, sid), title: "Click to cycle" }))
+            : [];
+
+          const handleClick = () => {
+            onSelectSeat?.(seat.id); // for Rotate button
+            if (seatMode==="assign" && activeStudentId) {
+              if (realIdx < 0) return; // ignore ghosts (shouldn't happen if normalized)
+              const from = indexOfStudent(activeStudentId);
+              setSeats(seats => {
+                const next = seats.slice();
+                const target = {...next[realIdx]};
+                const oldOccupant = target.studentId;
+                target.studentId = activeStudentId;
+                next[realIdx] = target;
+                if (from >= 0 && from !== realIdx) {
+                  const origin = {...next[from]};
+                  origin.studentId = oldOccupant || null; // swap if occupied
+                  next[from] = origin;
+                }
+                return next;
+              });
+              return;
+            }
+            if (seatMode==="swap") {
+              if (realIdx==null || realIdx<0) return;
+              if (swapIdx==null) setSwapIdx(realIdx);
+              else { swapByIndex(swapIdx, realIdx); setSwapIdx(null); }
+              return;
+            }
+            if (seatMode==="view" && singleView && st) onCycleOne(st.id, selectedSkillIds[0]);
+          };
+
+          const onSliceClick = (sliceIdx) => {
+            if (!(seatMode==="view" && st)) return;
+            const sid = selectedSkillIds[sliceIdx];
+            if (!sid) return;
+            onCycleOne(st.id, sid);
+          };
+
+          const ring = selectedSeatId === seat.id ? "ring-2 ring-indigo-400" : "";
+
+          return (
+            <div key={seat.id || i} onClick={handleClick} className={clsx(ring, "rounded-xl")}>
+              <Seat
+                student={st}
+                baseLevel={baseLevel}
+                flags={st?.flags}
+                slices={slices}
+                onSliceClick={onSliceClick}
+                singleMode={singleView}
+                allowSeatClick={seatMode==="view" && singleView && !!selectedSkillIds[0]}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // FREE / SNAP (absolute positioning + drag)
   return (
-    <div className="grid gap-2" style={{gridTemplateColumns: `repeat(${cols}, minmax(110px, 1fr))`}}>
-      {grid.flat().map((seat, i) => {
+    <div className="relative border rounded-2xl bg-white" style={{minHeight: (rows * (SEAT_H+GAP)) + 40}}>
+      {(cls.seats||[]).map((seat, idx) => {
         const st = studentById(seat.studentId);
         const count = selectedSkillIds?.length || 0;
-        const singleMode = count === 1;
-        const baseLevel = (st && singleMode) ? getLevel(marks, st.id, selectedSkillIds[0]) : null;
-        const slices = (st && !singleMode && count >= 2)
+        const singleView = (seatMode==="view" && count===1);
+        const baseLevel = (st && singleView) ? getLevel(marks, st.id, selectedSkillIds[0]) : null;
+        const slices = (st && seatMode==="view" && count>=2)
           ? selectedSkillIds.map(sid => ({ skillId: sid, level: getLevel(marks, st.id, sid), title: "Click to cycle" }))
           : [];
 
-        const handleSeatClick = () => {
-          if (!st) return;
-    if (singleMode) onCycleOne(st.id, selectedSkillIds[0]);
+        const onPointerDown = (e) => {
+          if (seatMode!=="move") return;
+          onSelectSeat?.(seat.id);
+          const startX = e.clientX, startY = e.clientY;
+          const move = (ev) => onDragSeat(idx, ev.clientX - startX, ev.clientY - startY, false);
+          const up = (ev) => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            onDragSeat(idx, ev.clientX - startX, ev.clientY - startY, true); // snap if needed
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up, {once:true});
         };
 
+        const handleClick = () => {
+          onSelectSeat?.(seat.id);
+          if (seatMode==="assign" && activeStudentId) {
+            const from = indexOfStudent(activeStudentId);
+            setSeats(seats => {
+              const next = seats.slice();
+              const target = {...next[idx]};
+              const oldOccupant = target.studentId;
+              target.studentId = activeStudentId;
+              next[idx] = target;
+              if (from >= 0 && from !== idx) {
+                const origin = {...next[from]};
+                origin.studentId = oldOccupant || null; // swap if occupied
+                next[from] = origin;
+              }
+              return next;
+            });
+            return;
+          }
+          if (seatMode==="swap") {
+            if (swapIdx==null) setSwapIdx(idx);
+            else { swapByIndex(swapIdx, idx); setSwapIdx(null); }
+            return;
+          }
+          if (seatMode==="view" && singleView && st) onCycleOne(st.id, selectedSkillIds[0]);
+        };
+
+        const onSliceClick = (sliceIdx) => {
+          if (!(seatMode==="view" && st)) return;
+          const sid = selectedSkillIds[sliceIdx];
+          if (!sid) return;
+          onCycleOne(st.id, sid);
+        };
+
+        const ring = selectedSeatId === seat.id ? "ring-2 ring-indigo-400" : "";
+
         return (
-          <Seat
-            key={i}
-            student={st}
-            baseLevel={baseLevel}
-            flags={st?.flags}
-            slices={slices}
-            onSeatClick={handleSeatClick}
-           onSliceClick={(sliceIdx)=>{ if (!st) return; const sid = selectedSkillIds[sliceIdx]; onCycleOne(st.id, sid); }}
-            singleMode={singleMode}
-             allowSeatClick={singleMode && !!selectedSkillIds[0]}
-          />
+          <div
+            key={seat.id || idx}
+            onPointerDown={onPointerDown}
+            onClick={handleClick}
+            className={clsx("absolute rounded-xl", ring)}
+            style={{
+              left: seat.x, top: seat.y, width: SEAT_W, height: SEAT_H,
+              transform: `rotate(${seat.rot||0}deg)`,
+              transformOrigin: "center center",
+            }}
+          >
+            <Seat
+              student={st}
+              baseLevel={baseLevel}
+              flags={st?.flags}
+              slices={slices}
+              onSliceClick={onSliceClick}
+              singleMode={singleView}
+              allowSeatClick={seatMode==="view" && singleView && !!selectedSkillIds[0]}
+            />
+          </div>
         );
       })}
     </div>
   );
 }
 
-// --------- Student Details ---------
+/* ===================== STUDENT DETAILS ===================== */
 function StudentCard({student, cls, skills, marks}){
   const grouped = useMemo(() => {
     const byStd = {};
@@ -420,14 +642,19 @@ function StudentCard({student, cls, skills, marks}){
   );
 }
 
-/* ===================== MONITOR (Top-level - Controlled) ===================== */
+/* ===================== MONITOR VIEW ===================== */
 function MonitorView({ state, setState, currentClass, studentById, setMark }){
   const cls = currentClass;
   const classSkills = (state.skills || []).filter(sk => (sk.classIds?.includes(cls?.id)));
   const selectedSkillIds = state.monitorSelectedSkillIds || [];
-  const applyAll = !!state.monitorApplyAll; // legacy, no UI now
   const [skillsOpen, setSkillsOpen] = useState(true);
 
+  // NEW seating & layout controls
+  const [seatMode, setSeatMode] = useState("view");  // "view" | "assign" | "swap" | "move"
+  const [activeStudentId, setActiveStudentId] = useState(""); // for Assign mode
+  const [selectedSeatId, setSelectedSeatId] = useState(null); // for Rotate button
+
+  // persist the selected skill set in app state (already persisted)
   const setSelectedSkillIds = (updater) => {
     setState(s => {
       const current = s.monitorSelectedSkillIds || [];
@@ -435,7 +662,6 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
       return {...s, monitorSelectedSkillIds: next};
     });
   };
-  const setApplyAll = (val) => setState(s => ({...s, monitorApplyAll: !!(typeof val === "function" ? val(s.monitorApplyAll) : val)}));
 
   const toggleSel = (id) => {
     setSelectedSkillIds(old => {
@@ -450,18 +676,21 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
     const curr = getLevel(cls.marks, studentId, skillId);
     setMark(studentId, skillId, nextLevel(curr));
   };
-  const cycleAll = (studentId) => {
-    if (!cls || selectedSkillIds.length === 0) return;
-    // NEW: advance each selected skill independently by one step
-    selectedSkillIds.forEach((sid) => {
-      const curr = getLevel(cls.marks, studentId, sid);
-      const nxt = nextLevel(curr);
-      setMark(studentId, sid, nxt);
-    });
+
+  const onUpdateSeats = (updater) => {
+    if (!cls) return;
+    setState(s => ({
+      ...s,
+      classes: s.classes.map(c => c.id===cls.id ? {
+        ...c,
+        seats: typeof updater === "function" ? updater(c.seats) : updater
+      } : c)
+    }));
   };
 
   return (
     <div className="max-w-6xl mx-auto p-4 space-y-3">
+      {/* Top row: Class picker */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <div className="font-semibold">Class:</div>
@@ -469,66 +698,120 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
             {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
+      </div>
 
-        
+      {/* NEW: Seating & Layout toolbar */}
+      <div className="flex items-center gap-2 flex-wrap border rounded-2xl p-2 bg-white">
+        <div className="text-sm font-semibold">Seating:</div>
+        {["view","assign","swap","move"].map(m => (
+          <Pill key={m} active={seatMode===m} onClick={()=>setSeatMode(m)}>
+            {m[0].toUpperCase()+m.slice(1)}
+          </Pill>
+        ))}
+
+        <div className="mx-2 h-5 w-px bg-slate-200" />
+
+        <div className="text-sm font-semibold">Layout:</div>
+        {["grid","free","snap"].map(m => (
+          <Pill
+            key={m}
+            active={currentClass?.layoutMode===m}
+            onClick={()=>setState(s => ({
+              ...s,
+              classes: s.classes.map(c => c.id===currentClass.id ? {...c, layoutMode: m} : c)
+            }))}
+          >
+            {m[0].toUpperCase()+m.slice(1)}
+          </Pill>
+        ))}
+
+        {seatMode==="assign" && (
+          <select
+            className="ml-2 border rounded-xl px-2 py-1 text-sm"
+            value={activeStudentId}
+            onChange={e=>setActiveStudentId(e.target.value)}
+          >
+            <option value="">(Pick student)</option>
+            {(currentClass?.students||[]).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        )}
+
+        <div className="mx-2 h-5 w-px bg-slate-200" />
+
+        <Button
+          className="!py-1 !px-2 text-xs"
+          title="Rotate selected seat 90°"
+          onClick={()=> {
+            if (!selectedSeatId) return;
+            setState(s => ({
+              ...s,
+              classes: s.classes.map(c => c.id===currentClass.id ? {
+                ...c,
+                seats: c.seats.map(seat => seat.id===selectedSeatId ? {...seat, rot: ((seat.rot||0)+90)%360} : seat)
+              } : c)
+            }))
+          }}
+        >
+          Rotate 90°
+        </Button>
       </div>
 
       {/* Selected Skills mapping (Left→Right) */}
-<div className="border rounded-2xl p-2 bg-white">
-  <div className="flex items-center justify-between mb-2">
-    <div className="text-sm font-semibold">Selected Skills (Left → Right)</div>
-    <Button onClick={()=>setSkillsOpen(o=>!o)} className="!py-1 !px-2 text-xs">
-      {skillsOpen ? "Hide" : "Show"}
-    </Button>
-  </div>
+      <div className="border rounded-2xl p-2 bg-white">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-semibold">Selected Skills (Left → Right)</div>
+          <Button onClick={()=>setSkillsOpen(o=>!o)} className="!py-1 !px-2 text-xs">
+            {skillsOpen ? "Hide" : "Show"}
+          </Button>
+        </div>
 
-  {skillsOpen ? (
-    <div className="flex flex-wrap gap-2 items-center">
-      {selectedSkillIds.length === 0 && <Tiny>No skills selected.</Tiny>}
-      {selectedSkillIds.map((sid, i) => {
-        const sk = (state.skills||[]).find(s => s.id === sid);
-        return (
-          <span key={sid} className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-slate-50 text-sm">
-            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-900 text-white text-xs">{i+1}</span>
-            <span className="truncate max-w-[220px]">{sk?.name}</span>
-            <button className="text-slate-500" onClick={()=>setSelectedSkillIds(arr => arr.filter(x => x !== sid))} title="Remove">×</button>
-          </span>
-        );
-      })}
-      {classSkills.map(sk => {
-        const on = selectedSkillIds.includes(sk.id);
-        return (
-          <button key={sk.id} onClick={()=>toggleSel(sk.id)}
-            className={clsx("px-3 py-1 rounded-full border text-sm", on ? "bg-slate-900 text-white border-slate-900" : "bg-white")}
-            title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
-            {on ? "✓ " : ""}{sk.name}
-          </button>
-        );
-      })}
-      {selectedSkillIds.length > 0 && (
-        <button className="ml-auto px-3 py-1 rounded-full border text-sm" onClick={()=>setSelectedSkillIds([])}>Clear all</button>
-      )}
-    </div>
-  ) : (
-    <div className="flex flex-wrap gap-2 items-center">
-      {selectedSkillIds.length === 0 ? (
-        <Tiny>No skills selected.</Tiny>
-      ) : (
-        selectedSkillIds.map((sid, i) => {
-          const sk = (state.skills||[]).find(s => s.id === sid);
-          return (
-            <span key={sid} className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border bg-white text-xs">
-              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-900 text-white text-[10px]">{i+1}</span>
-              <span className="truncate max-w-[140px]">{sk?.name}</span>
-            </span>
-          );
-        })
-      )}
-    </div>
-  )}
-</div>
+        {skillsOpen ? (
+          <div className="flex flex-wrap gap-2 items-center">
+            {selectedSkillIds.length === 0 && <Tiny>No skills selected.</Tiny>}
+            {selectedSkillIds.map((sid, i) => {
+              const sk = (state.skills||[]).find(s => s.id === sid);
+              return (
+                <span key={sid} className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-slate-50 text-sm">
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-900 text-white text-xs">{i+1}</span>
+                  <span className="truncate max-w-[220px]">{sk?.name}</span>
+                  <button className="text-slate-500" onClick={()=>setSelectedSkillIds(arr => arr.filter(x => x !== sid))} title="Remove">×</button>
+                </span>
+              );
+            })}
+            {classSkills.map(sk => {
+              const on = selectedSkillIds.includes(sk.id);
+              return (
+                <button key={sk.id} onClick={()=>toggleSel(sk.id)}
+                  className={clsx("px-3 py-1 rounded-full border text-sm", on ? "bg-slate-900 text-white border-slate-900" : "bg-white")}
+                  title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}>
+                  {on ? "✓ " : ""}{sk.name}
+                </button>
+              );
+            })}
+            {selectedSkillIds.length > 0 && (
+              <button className="ml-auto px-3 py-1 rounded-full border text-sm" onClick={()=>setSelectedSkillIds([])}>Clear all</button>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2 items-center">
+            {selectedSkillIds.length === 0 ? (
+              <Tiny>No skills selected.</Tiny>
+            ) : (
+              selectedSkillIds.map((sid, i) => {
+                const sk = (state.skills||[]).find(s => s.id === sid);
+                return (
+                  <span key={sid} className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border bg-white text-xs">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-900 text-white text-[10px]">{i+1}</span>
+                    <span className="truncate max-w-[140px]">{sk?.name}</span>
+                  </span>
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
 
-
+      {/* Grid / Free board */}
       <div>
         {cls ? (
           <SeatGrid
@@ -537,7 +820,13 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
             studentById={studentById}
             selectedSkillIds={selectedSkillIds}
             onCycleOne={cycleOne}
-
+            // NEW props:
+            seatMode={seatMode}
+            layoutMode={currentClass.layoutMode}
+            activeStudentId={activeStudentId}
+            onUpdateSeats={onUpdateSeats}
+            onSelectSeat={setSelectedSeatId}
+            selectedSeatId={selectedSeatId}
           />
         ) : <Tiny>No class selected.</Tiny>}
       </div>
@@ -546,17 +835,29 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
       {selectedSkillIds.length === 0 && (
         <div className="text-xs text-slate-500">Tip: Choose 1 skill to tint the whole seat and tap to cycle. Choose 2–6 skills to see slices (click a slice to edit).</div>
       )}
-    {selectedSkillIds.length === 1 && (
+      {selectedSkillIds.length === 1 && seatMode==="view" && (
         <div className="text-xs text-slate-500">Tip: Tap a seat to cycle this skill.</div>
       )}
-      {selectedSkillIds.length >= 2 && (
+      {selectedSkillIds.length >= 2 && seatMode==="view" && (
         <div className="text-xs text-slate-500">Tip: Click each vertical slice to edit that specific skill.</div>
+      )}
+      {seatMode==="assign" && (
+        <div className="text-xs text-slate-500">Assign: pick a student, then click a seat to place or swap.</div>
+      )}
+      {seatMode==="swap" && (
+        <div className="text-xs text-slate-500">Swap: click the first seat, then the second seat.</div>
+      )}
+      {seatMode==="move" && currentClass?.layoutMode!=="grid" && (
+        <div className="text-xs text-slate-500">Move: drag seats. In “Snap” layout, seats snap to an invisible grid when released.</div>
+      )}
+      {seatMode==="move" && currentClass?.layoutMode==="grid" && (
+        <div className="text-xs text-slate-500">Grid layout uses row/column positions. Switch to Free or Snap to drag seats freely.</div>
       )}
     </div>
   );
 }
 
-// ========== SaveToCloud (minimal, posts full state to /api/save) ==========
+/* ===================== SAVE TO CLOUD (dummy POST) ===================== */
 function SaveToCloud({ state }) {
   const [saving, setSaving] = useState(false);
   const [ok, setOk] = useState(null); // true | false | null
@@ -704,7 +1005,7 @@ export default function App(){
     })}));
   };
 
-  // ---------- Header ----------
+  /* ---------- Header ---------- */
   const Header = () => (
     <div className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b">
       <div className="max-w-6xl mx-auto px-4 py-3 grid grid-cols-3 items-center">
@@ -721,22 +1022,21 @@ export default function App(){
             ))}
           </div>
         </div>
-<div className="justify-self-end flex items-center gap-2">
-  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer text-sm">
-    <Upload size={16}/> Import
-    <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
-  </label>
+        <div className="justify-self-end flex items-center gap-2">
+          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer text-sm">
+            <Upload size={16}/> Import
+            <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
+          </label>
 
-  <SaveToCloud state={state} />
+          <SaveToCloud state={state} />
 
-  <Button icon={Download} onClick={exportJSON}>Export</Button>
-</div>
-        
+          <Button icon={Download} onClick={exportJSON}>Export</Button>
+        </div>
       </div>
     </div>
   );
 
-  // ---------- Pages ----------
+  /* ---------- Pages ---------- */
   const Home = () => (
     <div className="max-w-3xl mx-auto p-6 text-center">
       <div className="mx-auto mb-4 flex items-center justify-center gap-3 text-slate-600">
@@ -746,7 +1046,7 @@ export default function App(){
         <svg width="44" height="44" viewBox="0 0 24 24"><text x="6" y="16" fontSize="16">÷</text></svg>
       </div>
       <div className="text-2xl font-bold mb-2">Welcome</div>
-      <p className="text-slate-600">Use <b>Setup</b> to build classes, rosters, and skills. Use <b>Monitor</b> to mark one or many skills on seats. Try <b>Compare</b> to view up to six skills at once, sortable by each skill. Use <b>Student</b> to browse students without going back to Setup.</p>
+      <p className="text-slate-600">Use <b>Setup</b> to build classes, rosters, and skills. Use <b>Monitor</b> to mark one or many skills on seats (and to assign/swap/move seats). Try <b>Compare</b> to view up to six skills at once, sortable by each skill. Use <b>Student</b> to browse students without going back to Setup.</p>
     </div>
   );
 
@@ -843,18 +1143,18 @@ export default function App(){
                     {flagKeys.map(k => {
                       const on = !!st?.flags?.[k];
                       return (
-                       <button
-  key={k}
-  className={clsx(
-    "px-2 h-6 inline-flex items-center rounded-full border text-[11px] whitespace-normal leading-none select-none",
-    on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700",
-    "cursor-default" // single taps do nothing
-  )}
-  onDoubleClick={()=>toggleFlag(st, k)}   // require double-tap/click
-  title={`${FLAG_META[k].label} — double-tap to toggle`}
->
-  {FLAG_META[k].label}
-</button>
+                        <button
+                          key={k}
+                          className={clsx(
+                            "px-2 h-6 inline-flex items-center rounded-full border text-[11px] whitespace-normal leading-none select-none",
+                            on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700",
+                            "cursor-default"
+                          )}
+                          onDoubleClick={()=>toggleFlag(st, k)}   // require double-tap/click
+                          title={`${FLAG_META[k].label} — double-tap to toggle`}
+                        >
+                          {FLAG_META[k].label}
+                        </button>
                       );
                     })}
                   </div>
@@ -957,167 +1257,166 @@ export default function App(){
     );
   };
 
-const Compare = () => {
-  const [selectedClassId, setSelectedClassId] = useState(state.selectedClassId || state.classes[0]?.id || "");
-  useEffect(()=>{
-    if (state.selectedClassId && state.selectedClassId !== selectedClassId) setSelectedClassId(state.selectedClassId);
-  }, [state.selectedClassId]);
+  const Compare = () => {
+    const [selectedClassId, setSelectedClassId] = useState(state.selectedClassId || state.classes[0]?.id || "");
+    useEffect(()=>{
+      if (state.selectedClassId && state.selectedClassId !== selectedClassId) setSelectedClassId(state.selectedClassId);
+    }, [state.selectedClassId]);
+    const cls = (state.classes || []).find(c => c.id === selectedClassId);
+    const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls?.id));
 
-  const cls = (state.classes || []).find(c => c.id === selectedClassId);
-  const skills = (state.skills || []).filter(sk => sk.classIds?.includes(cls?.id));
+    const [selected, setSelected] = useState([]);
+    const [skillsOpen, setSkillsOpen] = useState(true);
+    const [sortKey, setSortKey] = useState("name");
+    const [sortDir, setSortDir] = useState("asc");
 
-  const [selected, setSelected] = useState([]);
-  const [skillsOpen, setSkillsOpen] = useState(true);
-  const [sortKey, setSortKey] = useState("name");
-  const [sortDir, setSortDir] = useState("asc");
+    const toggleSel = (id) => {
+      setSelected((arr) => {
+        if (arr.includes(id)) return arr.filter(x => x !== id);
+        if (arr.length >= 6) return [...arr];
+        return [...arr, id];
+      });
+    };
 
-  const toggleSel = (id) => {
-    setSelected((arr) => {
-      if (arr.includes(id)) return arr.filter(x => x !== id);
-      if (arr.length >= 6) return [...arr];
-      return [...arr, id];
+    const rows = (cls?.students || []).map(st => {
+      const cells = selected.map(sid => ({ sid, lv: getLevel(cls.marks, st.id, sid) }));
+      return { st, cells };
     });
-  };
 
-  const rows = (cls?.students || []).map(st => {
-    const cells = selected.map(sid => ({ sid, lv: getLevel(cls.marks, st.id, sid) }));
-    return { st, cells };
-  });
+    const cmp = (a, b) => {
+      if (sortKey === "name") {
+        const n1 = a.st.name.toLowerCase(), n2 = b.st.name.toLowerCase();
+        return sortDir === "asc" ? (n1 < n2 ? -1 : n1 > n2 ? 1 : 0) : (n1 > n2 ? -1 : n1 < n2 ? 1 : 0);
+      } else {
+        const sid = sortKey;
+        const l1 = a.cells.find(c=>c.sid===sid)?.lv ?? -1;
+        const l2 = b.cells.find(c=>c.sid===sid)?.lv ?? -1;
+        return sortDir === "asc" ? (l1 - l2) : (l2 - l1);
+      }
+    };
 
-  const cmp = (a, b) => {
-    if (sortKey === "name") {
-      const n1 = a.st.name.toLowerCase(), n2 = b.st.name.toLowerCase();
-      return sortDir === "asc" ? (n1 < n2 ? -1 : n1 > n2 ? 1 : 0) : (n1 > n2 ? -1 : n1 < n2 ? 1 : 0);
-    } else {
-      const sid = sortKey;
-      const l1 = a.cells.find(c=>c.sid===sid)?.lv ?? -1;
-      const l2 = b.cells.find(c=>c.sid===sid)?.lv ?? -1;
-      return sortDir === "asc" ? (l1 - l2) : (l2 - l1);
-    }
-  };
+    const sortedRows = [...rows].sort(cmp);
 
-  const sortedRows = [...rows].sort(cmp);
+    const headerClick = (key) => {
+      if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+      else { setSortKey(key); setSortDir("asc"); }
+    };
 
-  const headerClick = (key) => {
-    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(key); setSortDir("asc"); }
-  };
+    const cellBg = (lv) => {
+      switch (lv) {
+        case 0: return "#fecaca";
+        case 2: return "#fde68a";
+        case 3: return "#bbf7d0";
+        case 5: return "#e5e7eb";
+        default: return "#ffffff";
+      }
+    };
 
-  const cellBg = (lv) => {
-    switch (lv) {
-      case 0: return "#fecaca";
-      case 2: return "#fde68a";
-      case 3: return "#bbf7d0";
-      case 5: return "#e5e7eb";
-      default: return "#ffffff";
-    }
-  };
-
-  return (
-    <div className="p-3">
-      <div className="max-w-6xl mx-auto flex items-center justify-between mb-2">
-        <div className="flex items-center gap-3">
-          <div className="text-lg font-semibold">Compare Skills</div>
-          <div className="flex items-center gap-2 ml-4">
-            <div className="font-semibold">Class:</div>
-            <select
-              className="border rounded-xl px-3 py-1 text-base font-medium"
-              value={selectedClassId}
-              onChange={e => { setSelectedClassId(e.target.value); setState(s => ({...s, selectedClassId: e.target.value})); }}
-            >
-              {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-        </div>
-        <Button onClick={()=>setSkillsOpen(o=>!o)} className="!py-1 !px-2 text-xs">
-          {skillsOpen ? "Hide skills" : "Show skills"}
-        </Button>
-      </div>
-
-      <div className="max-w-6xl mx-auto p-2 mb-2 border rounded-2xl">
-        {skillsOpen ? (
-          <div className="flex flex-wrap gap-2">
-            {skills.map(sk => (
-              <button
-                key={sk.id}
-                onClick={()=>toggleSel(sk.id)}
-                className={clsx(
-                  "px-3 py-1 rounded-full border text-sm",
-                  selected.includes(sk.id) ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700"
-                )}
-                title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}
+    return (
+      <div className="p-3">
+        <div className="max-w-6xl mx-auto flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <div className="text-lg font-semibold">Compare Skills</div>
+            <div className="flex items-center gap-2 ml-4">
+              <div className="font-semibold">Class:</div>
+              <select
+                className="border rounded-xl px-3 py-1 text-base font-medium"
+                value={selectedClassId}
+                onChange={e => { setSelectedClassId(e.target.value); setState(s => ({...s, selectedClassId: e.target.value})); }}
               >
-                {sk.name}
-              </button>
-            ))}
+                {(state.classes||[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <Button onClick={()=>setSkillsOpen(o=>!o)} className="!py-1 !px-2 text-xs">
+            {skillsOpen ? "Hide skills" : "Show skills"}
+          </Button>
+        </div>
+
+        <div className="max-w-6xl mx-auto p-2 mb-2 border rounded-2xl">
+          {skillsOpen ? (
+            <div className="flex flex-wrap gap-2">
+              {skills.map(sk => (
+                <button
+                  key={sk.id}
+                  onClick={()=>toggleSel(sk.id)}
+                  className={clsx(
+                    "px-3 py-1 rounded-full border text-sm",
+                    selected.includes(sk.id) ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700"
+                  )}
+                  title={(prettyStandard(sk.standard) ? `${prettyStandard(sk.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk.standard)] || "")}
+                >
+                  {sk.name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {selected.length === 0
+                ? <Tiny>No skills selected.</Tiny>
+                : selected.map((sid, i) => {
+                    const sk = skills.find(s => s.id === sid);
+                    return (
+                      <span key={sid} className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border bg-white text-xs">
+                        <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-900 text-white text-[10px]">{i+1}</span>
+                        <span className="truncate max-w-[160px]">{sk?.name}</span>
+                      </span>
+                    );
+                  })}
+            </div>
+          )}
+        </div>
+
+        {cls && selected.length > 0 ? (
+          <div className="max-w-6xl mx-auto overflow-auto border rounded-2xl">
+            <table className="w-full table-fixed">
+              <colgroup>
+                <col style={{width:"220px"}}/>
+                {selected.map((sid)=>(<col key={sid} style={{width:`${Math.max(120, Math.floor(800/selected.length))}px`}}/>))}
+              </colgroup>
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="text-left px-3 py-2 cursor-pointer" onClick={()=>headerClick("name")}>Student</th>
+                  {selected.map(sid => {
+                    const sk = skills.find(s => s.id === sid);
+                    return (
+                      <th
+                        key={sid}
+                        className="px-3 py-2 text-left cursor-pointer"
+                        onClick={()=>headerClick(sid)}
+                        title={(prettyStandard(sk?.standard) ? `${prettyStandard(sk?.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk?.standard)] || "")}
+                      >
+                        <div className="font-medium truncate">{sk?.name}</div>
+                        <div className="text-xs text-slate-500 truncate">
+                          {prettyStandard(sk?.standard)} {G7_STANDARDS[prettyStandard(sk?.standard)] ? `· ${G7_STANDARDS[prettyStandard(sk?.standard)]}` : ""}
+                        </div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.map(({st, cells}) => (
+                  <tr key={st.id} className="border-t">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="font-medium">{st.name}</div>
+                    </td>
+                    {cells.map(({sid, lv}) => (
+                      <td key={sid} className="px-3 py-2">
+                        <div className="h-6 rounded-md ring-1" style={{background: cellBg(lv), borderColor: "#e5e7eb"}} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {selected.length === 0
-              ? <Tiny>No skills selected.</Tiny>
-              : selected.map((sid, i) => {
-                  const sk = skills.find(s => s.id === sid);
-                  return (
-                    <span key={sid} className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border bg-white text-xs">
-                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-900 text-white text-[10px]">{i+1}</span>
-                      <span className="truncate max-w-[160px]">{sk?.name}</span>
-                    </span>
-                  );
-                })}
-          </div>
+          <div className="text-slate-500 text-sm max-w-6xl mx-auto">Pick up to six skills to compare.</div>
         )}
       </div>
-
-      {cls && selected.length > 0 ? (
-        <div className="max-w-6xl mx-auto overflow-auto border rounded-2xl">
-          <table className="w-full table-fixed">
-            <colgroup>
-              <col style={{width:"220px"}}/>
-              {selected.map((sid)=>(<col key={sid} style={{width:`${Math.max(120, Math.floor(800/selected.length))}px`}}/>))}
-            </colgroup>
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="text-left px-3 py-2 cursor-pointer" onClick={()=>headerClick("name")}>Student</th>
-                {selected.map(sid => {
-                  const sk = skills.find(s => s.id === sid);
-                  return (
-                    <th
-                      key={sid}
-                      className="px-3 py-2 text-left cursor-pointer"
-                      onClick={()=>headerClick(sid)}
-                      title={(prettyStandard(sk?.standard) ? `${prettyStandard(sk?.standard)} — ` : "") + (G7_STANDARDS[prettyStandard(sk?.standard)] || "")}
-                    >
-                      <div className="font-medium truncate">{sk?.name}</div>
-                      <div className="text-xs text-slate-500 truncate">
-                        {prettyStandard(sk?.standard)} {G7_STANDARDS[prettyStandard(sk?.standard)] ? `· ${G7_STANDARDS[prettyStandard(sk?.standard)]}` : ""}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map(({st, cells}) => (
-                <tr key={st.id} className="border-t">
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <div className="font-medium">{st.name}</div>
-                  </td>
-                  {cells.map(({sid, lv}) => (
-                    <td key={sid} className="px-3 py-2">
-                      <div className="h-6 rounded-md ring-1" style={{background: cellBg(lv), borderColor: "#e5e7eb"}} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="text-slate-500 text-sm max-w-6xl mx-auto">Pick up to six skills to compare.</div>
-      )}
-    </div>
-  );
-};
+    );
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
