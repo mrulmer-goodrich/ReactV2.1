@@ -546,6 +546,41 @@ function MonitorView({ state, setState, currentClass, studentById, setMark }){
   );
 }
 
+// ========== SaveToCloud (minimal, posts full state to /api/save) ==========
+function SaveToCloud({ state }) {
+  const [saving, setSaving] = useState(false);
+  const [ok, setOk] = useState(null); // true | false | null
+
+  const doSave = async () => {
+    try {
+      setSaving(true);
+      setOk(null);
+      const res = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: state }),
+      });
+      setOk(res.ok);
+    } catch {
+      setOk(false);
+    } finally {
+      setSaving(false);
+      // fade status after a moment
+      setTimeout(() => setOk(null), 1500);
+    }
+  };
+
+  return (
+    <div className="inline-flex items-center gap-2">
+      <Button onClick={doSave} title="Save current data to Cloud">
+        {saving ? "Saving…" : "Save to Cloud"}
+      </Button>
+      {ok === true && <span className="text-xs text-emerald-700">Saved</span>}
+      {ok === false && <span className="text-xs text-rose-700">Failed</span>}
+    </div>
+  );
+}
+
 /* ===================== MAIN APP ===================== */
 export default function App(){
   const [state, setState] = useState(blankState);
@@ -676,13 +711,17 @@ export default function App(){
             ))}
           </div>
         </div>
-        <div className="justify-self-end flex items-center gap-2">
-          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer text-sm">
-            <Upload size={16}/> Import
-            <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
-          </label>
-          <Button icon={Download} onClick={exportJSON}>Export</Button>
-        </div>
+<div className="justify-self-end flex items-center gap-2">
+  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer text-sm">
+    <Upload size={16}/> Import
+    <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
+  </label>
+
+  <SaveToCloud state={state} />
+
+  <Button icon={Download} onClick={exportJSON}>Export</Button>
+</div>
+        
       </div>
     </div>
   );
