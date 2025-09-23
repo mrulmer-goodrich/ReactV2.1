@@ -77,12 +77,13 @@ const LEVELS = {
 const validLevels = [0,2,3,5];
 
 const FLAG_META = {
-  ml:      { label: "ML",     dot: "bg-sky-500" },
-  mlNew:   { label: "ML New", dot: "bg-indigo-500" },
-  iep504:  { label: "IEP",    dot: "bg-purple-500" },
-  ec:      { label: "EC",     dot: "bg-orange-500" },
-  bubble:  { label: "Bubble", dot: "bg-rose-500" },
-  ca:      { label: "CA",     dot: "bg-gray-700" }, // Chronically Absent
+  ml:      { label: "ML",     dot: "bg-purple-600" },
+  mlNew:   { label: "ML New", dot: "bg-purple-600" },
+  iep504:  { label: "IEP",    dot: "bg-orange-500" },
+  ec:      { label: "EC",     dot: "bg-yellow-400" },
+  bubble:  { label: "Bubble", dot: "bg-purple-700" },
+  ccr:     { label: "CCR",    dot: "bg-blue-500" },
+  ca:      { label: "CA",     dot: "bg-white border border-black" }, // Chronically Absent
 };
 const flagKeys = Object.keys(FLAG_META);
 
@@ -305,17 +306,29 @@ function normalizeState(input) {
 
 /* ===================== SEAT & GRID ===================== */
 function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode, allowSeatClick}){
+  const assigned = !!student;
   const isAbsent = singleMode && baseLevel === 5;
-  const bgClass = isAbsent
-    ? "bg-gray-100 border-gray-300"
-    : (singleMode && baseLevel!=null ? `${LEVELS[baseLevel].bg} border-slate-300` : "bg-white border-slate-300 hover:shadow-sm");
+
+  // Base background rules:
+  // - Absent (single-skill): darker gray
+  // - Else if level color present (single-skill): use that color
+  // - Else if assigned: light gray
+  // - Else (empty seat): white
+  let bgClass = "bg-white border-slate-300";
+  if (isAbsent) {
+    bgClass = "bg-gray-300 border-gray-300";
+  } else if (singleMode && baseLevel != null) {
+    bgClass = `${LEVELS[baseLevel].bg} border-slate-300`;
+  } else if (assigned) {
+    bgClass = "bg-gray-100 border-slate-300";
+  }
 
   return (
     <div
-      className={clsx("relative rounded-xl border min-h-[78px] cursor-pointer select-none", bgClass)}
+      className={clsx("relative rounded-xl border min-h-[78px] cursor-pointer select-none hover:shadow-sm", bgClass)}
       onClick={allowSeatClick ? onSeatClick : undefined}
     >
-      {/* Multi-skill overlay slices (on top, clickable) */}
+      {/* Multi-skill overlay slices (on top, clickable) — no letters now */}
       {slices && slices.length > 0 && (
         <div className="absolute inset-0 rounded-xl overflow-hidden flex z-10">
           {slices.map((sl, idx) => (
@@ -326,11 +339,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
               onClick={(e)=>{ e.stopPropagation(); onSliceClick?.(idx); }}
               title={sl.title}
             >
-              {/* bottom-centered tiny level letter */}
-              <div className="absolute left-0 right-0 bottom-0 pb-[2px] flex items-end justify-center text-[10px] text-slate-700 font-semibold select-none pointer-events-none">
-                {sl.level === 3 ? "P" : sl.level === 2 ? "D" : sl.level === 0 ? "H" : sl.level === 5 ? "A" : ""}
-              </div>
-              {idx < slices.length - 1 && (<div className="absolute right-0 top-0 h-full w-[2px] bg-black/40 pointer-events-none" />)}
+              {idx < slices.length - 1 && (<div className="absolute right-0 top-0 h-full w-[2px] bg-black/30 pointer-events-none" />)}
             </div>
           ))}
         </div>
@@ -339,35 +348,76 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
       {/* Absent X overlay (only in single-skill view) */}
       {isAbsent && (
         <div className="absolute inset-0 pointer-events-none opacity-70 z-0">
-          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 rotate-45"></div>
-          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 -rotate-45"></div>
+          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-600 rotate-45"></div>
+          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-600 -rotate-45"></div>
         </div>
       )}
 
-      {/* Name + flags */}
-      <div className="relative p-2 h-full pointer-events-none grid">
-        {/* Centered name */}
-        <div className="place-self-center px-2 text-center">
-          <div className="font-medium text-slate-800 leading-tight line-clamp-2">
-            {student?.name || "—"}
+      {/* Centered name (only if seat is assigned). Absolute + flex to force perfect centering */}
+      {student && (
+        <div className="absolute inset-0 flex items-center justify-center px-2 pointer-events-none">
+          <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
+            {student.name}
           </div>
         </div>
+      )}
 
-        {/* Flags */}
-        <div className="absolute left-2 bottom-2 flex gap-1 flex-wrap max-w-[70%]">
-          {flagKeys.filter(k => flags?.[k]).map(k => <Dot key={k} className={FLAG_META[k].dot} />)}
-        </div>
+      {/* Corner flag tokens (2.5x size). Purely visual; pointer-events-none so taps go to seat/slices */}
+      {assigned && (
+        <>
+          {/* Top-left: IEP (orange), EC (yellow) */}
+          {(flags?.iep504 || flags?.ec) && (
+            <div className="absolute top-1 left-1 flex gap-1 pointer-events-none">
+              {flags?.iep504 && (
+                <span title="IEP" className="inline-block w-5 h-5 rounded-full border border-orange-700" style={{ backgroundColor: "#f97316" }} />
+              )}
+              {flags?.ec && (
+                <span title="EC" className="inline-block w-5 h-5 rounded-full border border-yellow-700" style={{ backgroundColor: "#facc15" }} />
+              )}
+            </div>
+          )}
 
-        {/* Level badge (single mode only) */}
-        {singleMode && baseLevel!=null && (
-          <div className={clsx(
-            "absolute right-2 bottom-2 px-2 py-0.5 rounded-full text-[10px] ring-1",
-            LEVELS[baseLevel].ring, LEVELS[baseLevel].bg, LEVELS[baseLevel].text
-          )}>
-            {LEVELS[baseLevel].name}
-          </div>
-        )}
-      </div>
+          {/* Top-right: Bubble (hatched purple) OR CCR (blue). Mutually exclusive by toggle logic. */}
+          {(flags?.bubble || flags?.ccr) && (
+            <div className="absolute top-1 right-1 flex gap-1 pointer-events-none">
+              {flags?.bubble && (
+                <span
+                  title="Bubble"
+                  className="inline-block w-5 h-5 rounded-sm border"
+                  style={{
+                    backgroundColor: "#a78bfa",
+                    borderColor: "#4c1d95",
+                    backgroundImage:
+                      "repeating-linear-gradient(45deg, rgba(76,29,149,0.6) 0 2px, rgba(167,139,250,0.0) 2px 4px)"
+                  }}
+                />
+              )}
+              {flags?.ccr && (
+                <span title="CCR" className="inline-block w-5 h-5 rounded-sm border border-blue-800" style={{ backgroundColor: "#3b82f6" }} />
+              )}
+            </div>
+          )}
+
+          {/* Bottom-left: ML + ML New (same purple) */}
+          {(flags?.ml || flags?.mlNew) && (
+            <div className="absolute bottom-1 left-1 flex gap-1 pointer-events-none">
+              {flags?.ml && (
+                <span title="ML" className="inline-block w-5 h-5 rounded-full border border-purple-800" style={{ backgroundColor: "#7c3aed" }} />
+              )}
+              {flags?.mlNew && (
+                <span title="ML New" className="inline-block w-5 h-5 rounded-full border border-purple-800" style={{ backgroundColor: "#7c3aed" }} />
+              )}
+            </div>
+          )}
+
+          {/* Bottom-right: CA (white with black border) */}
+          {flags?.ca && (
+            <div className="absolute bottom-1 right-1 pointer-events-none">
+              <span title="CA" className="inline-block w-5 h-5 rounded-full border border-black bg-white" />
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -388,7 +438,7 @@ function SeatGrid({
   const rows = cls.rows || 4, cols = cls.cols || 9;
   const SEAT_W = 110, SEAT_H = 78, GAP = 8;
   const SNAP_X = SEAT_W + GAP, SNAP_Y = SEAT_H + GAP;
-  const DRAG_THRESHOLD = 6;
+  const DRAG_THRESHOLD = 10;
 
   const setSeats = (updater) => onUpdateSeats(updater);
   const indexOfStudent = (sid) => (cls.seats || []).findIndex(s => s.studentId === sid);
@@ -1093,13 +1143,28 @@ const addClass = () => setState(s => {
     })}));
   };
   const toggleFlag = (st, key) => {
-    if (!currentClass) return;
-    setState(s => ({...s, classes: s.classes.map(c => {
+  if (!currentClass) return;
+  setState(s => ({
+    ...s,
+    classes: s.classes.map(c => {
       if (c.id !== currentClass.id) return c;
-      const students = (c.students||[]).map(x => x.id===st.id ? {...x, flags: {...(x.flags||{}), [key]: !x?.flags?.[key]}} : x);
-      return {...c, students};
-    })}));
-  };
+      const students = (c.students || []).map(x => {
+        if (x.id !== st.id) return x;
+        const nextFlags = { ...(x.flags || {}) };
+        const nextValue = !nextFlags[key];
+
+        // Enforce Bubble <-> CCR exclusivity
+        if (key === "bubble" && nextValue) nextFlags.ccr = false;
+        if (key === "ccr"    && nextValue) nextFlags.bubble = false;
+
+        nextFlags[key] = nextValue;
+        return { ...x, flags: nextFlags };
+      });
+      return { ...c, students };
+    })
+  }));
+};
+
   const openStudentDetail = (st) => setState(s => ({...s, selectedStudentId: st.id, tab: "Student"}));
 
   // Skill modal save/delete
@@ -1272,18 +1337,20 @@ const addClass = () => setState(s => {
                     {flagKeys.map(k => {
                       const on = !!st?.flags?.[k];
                       return (
-                        <button
-                          key={k}
-                          className={clsx(
-                            "px-2 h-6 inline-flex items-center rounded-full border text-[11px] whitespace-normal leading-none select-none",
-                            on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700",
-                            "cursor-default"
-                          )}
-                          onDoubleClick={()=>toggleFlag(st, k)}   // require double-tap/click
-                          title={`${FLAG_META[k].label} — double-tap to toggle`}
-                        >
-                          {FLAG_META[k].label}
-                        </button>
+                       <button
+  key={k}
+  type="button"
+  className={clsx(
+    "px-2 h-6 inline-flex items-center rounded-full border text-[11px] whitespace-normal leading-none select-none",
+    on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300 text-slate-700",
+    "cursor-default"
+  )}
+  onDoubleClick={(e)=>{ e.preventDefault(); e.stopPropagation(); toggleFlag(st, k); }}
+  title={`${FLAG_META[k].label} — double-tap to toggle`}
+>
+  {FLAG_META[k].label}
+</button>
+
                       );
                     })}
                   </div>
