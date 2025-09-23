@@ -315,14 +315,24 @@ function Seat({
   singleMode,
   allowSeatClick
 }) {
-  const isAbsent = singleMode && baseLevel === 5;
+const isAbsent = singleMode && baseLevel === 5;
 
-  // base background/tint
-  const bgClass = isAbsent
-    ? "bg-gray-100 border-gray-300"
-    : (singleMode && baseLevel != null
-        ? `${LEVELS[baseLevel].bg} border-slate-300`
-        : "bg-white border-slate-300 hover:shadow-sm");
+const hasStudent = !!student;
+let bgClass;
+if (isAbsent) {
+  // darker grey for ABSENT
+  bgClass = "bg-gray-300 border-gray-300";
+} else if (singleMode && baseLevel != null) {
+  // single-skill tint when a level is set
+  bgClass = `${LEVELS[baseLevel].bg} border-slate-300`;
+} else if (hasStudent) {
+  // assigned seat default = light gray
+  bgClass = "bg-slate-100 border-slate-300";
+} else {
+  // completely blank seat
+  bgClass = "bg-white border-slate-300";
+}
+;
 
   // --- token sizes ---
   const BASE = 20;                      // “normal” token
@@ -369,9 +379,7 @@ function Seat({
               title={sl.title}
             >
               {/* tiny letter kept; remove if you want pure color */}
-              <div className="absolute left-0 right-0 bottom-0 pb-[2px] flex items-end justify-center text-[10px] text-slate-700 font-semibold select-none pointer-events-none">
-                {sl.level === 3 ? "P" : sl.level === 2 ? "D" : sl.level === 0 ? "H" : sl.level === 5 ? "A" : ""}
-              </div>
+             
               {idx < slices.length - 1 && (
                 <div className="absolute right-0 top-0 h-full w-[2px] bg-black/40 pointer-events-none" />
               )}
@@ -389,7 +397,7 @@ function Seat({
       )}
 
       {/* name layer — centered, on its own z */}
-      <div className="absolute inset-0 grid place-items-center px-2 z-10 pointer-events-none">
+      <div className="absolute inset-0 grid place-items-center px-2 z-0 pointer-events-none">
         <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
           {student?.name || "" /* blank if unassigned */}
         </div>
@@ -399,7 +407,7 @@ function Seat({
       {/* TOP-LEFT: EC full (yellow), then IEP half (orange) */}
       <div className="absolute top-2 left-2 z-20 pointer-events-none flex items-start gap-1">
         {flags?.ec && (
-          <span style={circle(BASE, { background: "#F59E0B" })} />
+          <span style={circle(BASE, { background: "#FFD400" })} />
         )}
         {flags?.iep504 && (
           <span style={circle(SMALL, { background: "#F97316" })} />
@@ -431,7 +439,7 @@ function Seat({
 
       {/* BOTTOM-RIGHT: CA (white with dark border, large) */}
       {flags?.ca && (
-        <div className="absolute bottom-2 right-2 z-20 pointer-events-none">
+       <div className="absolute bottom-1 right-2 z-20 pointer-events-none">
           <span
             style={circle(LARGE, {
               background: "#ffffff",
