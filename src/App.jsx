@@ -330,7 +330,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
     >
       {/* Multi-skill overlay slices (on top, clickable) — no letters now */}
       {slices && slices.length > 0 && (
-        <div className="absolute inset-0 rounded-xl overflow-hidden flex z-10">
+      <div className="absolute inset-0 rounded-xl overflow-hidden flex z-0">
           {slices.map((sl, idx) => (
             <div
               key={idx}
@@ -367,7 +367,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
         <>
           {/* Top-left: IEP (orange), EC (yellow) */}
           {(flags?.iep504 || flags?.ec) && (
-            <div className="absolute top-1 left-1 flex gap-1 pointer-events-none">
+        <div className="absolute top-2 left-2 z-20 flex gap-1 pointer-events-none">
               {flags?.iep504 && (
                 <span title="IEP" className="inline-block w-5 h-5 rounded-full border border-orange-700" style={{ backgroundColor: "#f97316" }} />
               )}
@@ -379,7 +379,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
 
           {/* Top-right: Bubble (hatched purple) OR CCR (blue). Mutually exclusive by toggle logic. */}
           {(flags?.bubble || flags?.ccr) && (
-            <div className="absolute top-1 right-1 flex gap-1 pointer-events-none">
+          <div className="absolute top-2 right-2 z-20 flex gap-1 pointer-events-none">
               {flags?.bubble && (
                 <span
                   title="Bubble"
@@ -400,7 +400,7 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
 
           {/* Bottom-left: ML + ML New (same purple) */}
           {(flags?.ml || flags?.mlNew) && (
-            <div className="absolute bottom-1 left-1 flex gap-1 pointer-events-none">
+<div className="absolute bottom-2 left-2 z-20 flex gap-1 pointer-events-none">
               {flags?.ml && (
                 <span title="ML" className="inline-block w-5 h-5 rounded-full border border-purple-800" style={{ backgroundColor: "#7c3aed" }} />
               )}
@@ -412,7 +412,8 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
 
           {/* Bottom-right: CA (white with black border) */}
           {flags?.ca && (
-            <div className="absolute bottom-1 right-1 pointer-events-none">
+   <div className="absolute bottom-2 right-2 z-20 pointer-events-none">
+
               <span title="CA" className="inline-block w-5 h-5 rounded-full border border-black bg-white" />
             </div>
           )}
