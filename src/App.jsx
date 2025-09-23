@@ -305,41 +305,82 @@ function normalizeState(input) {
 }
 
 /* ===================== SEAT & GRID ===================== */
-function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, singleMode, allowSeatClick}){
-  const assigned = !!student;
+function Seat({
+  student,
+  baseLevel,
+  flags,
+  slices,
+  onSliceClick,
+  onSeatClick,
+  singleMode,
+  allowSeatClick
+}) {
+  // Absent overlay color/label logic is unchanged
   const isAbsent = singleMode && baseLevel === 5;
+  const bgClass = isAbsent
+    ? "bg-gray-100 border-gray-300"
+    : (singleMode && baseLevel != null
+        ? `${LEVELS[baseLevel].bg} border-slate-300`
+        : "bg-white border-slate-300 hover:shadow-sm");
 
-  // Base background rules:
-  // - Absent (single-skill): darker gray
-  // - Else if level color present (single-skill): use that color
-  // - Else if assigned: light gray
-  // - Else (empty seat): white
-  let bgClass = "bg-white border-slate-300";
-  if (isAbsent) {
-    bgClass = "bg-gray-300 border-gray-300";
-  } else if (singleMode && baseLevel != null) {
-    bgClass = `${LEVELS[baseLevel].bg} border-slate-300`;
-  } else if (assigned) {
-    bgClass = "bg-gray-100 border-slate-300";
-  }
+  // --- sizing for corner tokens ---
+  const BASE = 20;                    // current “standard” token size (~w-5 h-5)
+  const SMALL = Math.round(BASE * 0.5);   // 50% (ML/ML New, IEP)
+  const LARGE = Math.round(BASE * 1.25);  // +25% (Bubble/CCR, CA)
+  const OVERLAP = Math.round(SMALL * 0.25); // 25% overlap between ML + ML New
+
+  // helpers for circles
+  const circle = (size, style = {}) => ({
+    width: size,
+    height: size,
+    borderRadius: "9999px",
+    display: "inline-block",
+    ...style,
+  });
+
+  // hatched purple for Bubble (circle with stripes)
+  const bubbleHatch = {
+    backgroundColor: "#7C3AED",
+    backgroundImage:
+      "repeating-linear-gradient(45deg, rgba(255,255,255,0.3) 0 6px, rgba(255,255,255,0.0) 6px 12px)",
+    backgroundSize: "12px 12px",
+  };
+
+  // pick top-right token (mutually exclusive in UI; enforce visually here too)
+  const showCCR = !!flags?.ccr && !flags?.bubble;
+  const showBubble = !!flags?.bubble && !flags?.ccr;
 
   return (
     <div
-      className={clsx("relative rounded-xl border min-h-[78px] cursor-pointer select-none hover:shadow-sm", bgClass)}
+      className={clsx(
+        "relative rounded-xl border min-h-[78px] cursor-pointer select-none",
+        bgClass
+      )}
       onClick={allowSeatClick ? onSeatClick : undefined}
     >
-      {/* Multi-skill overlay slices (on top, clickable) — no letters now */}
+      {/* multi-skill slices (kept behind tokens) */}
       {slices && slices.length > 0 && (
-      <div className="absolute inset-0 rounded-xl overflow-hidden flex z-0">
+        <div className="absolute inset-0 rounded-xl overflow-hidden flex z-0">
           {slices.map((sl, idx) => (
             <div
               key={idx}
               className="h-full relative"
-              style={{ width: `${100 / slices.length}%`, background: overlayColor(sl.level) }}
-              onClick={(e)=>{ e.stopPropagation(); onSliceClick?.(idx); }}
+              style={{
+                width: `${100 / slices.length}%`,
+                background: overlayColor(sl.level),
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSliceClick?.(idx);
+              }}
               title={sl.title}
             >
-              {idx < slices.length - 1 && (<div className="absolute right-0 top-0 h-full w-[2px] bg-black/30 pointer-events-none" />)}
+              <div className="absolute left-0 right-0 bottom-0 pb-[2px] flex items-end justify-center text-[10px] text-slate-700 font-semibold select-none pointer-events-none">
+                {sl.level === 3 ? "P" : sl.level === 2 ? "D" : sl.level === 0 ? "H" : sl.level === 5 ? "A" : ""}
+              </div>
+              {idx < slices.length - 1 && (
+                <div className="absolute right-0 top-0 h-full w-[2px] bg-black/40 pointer-events-none" />
+              )}
             </div>
           ))}
         </div>
@@ -348,77 +389,85 @@ function Seat({student, baseLevel, flags, slices, onSliceClick, onSeatClick, sin
       {/* Absent X overlay (only in single-skill view) */}
       {isAbsent && (
         <div className="absolute inset-0 pointer-events-none opacity-70 z-0">
-          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-600 rotate-45"></div>
-          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-600 -rotate-45"></div>
+          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 rotate-45"></div>
+          <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 -rotate-45"></div>
         </div>
       )}
 
-      {/* Centered name (only if seat is assigned). Absolute + flex to force perfect centering */}
-      {student && (
-        <div className="absolute inset-0 flex items-center justify-center px-2 pointer-events-none">
+      {/* Name + corner tokens; make the layer non-interactive so slices/seat get clicks */}
+      <div className="relative p-2 h-full pointer-events-none grid">
+        {/* Centered name — blank when seat unassigned */}
+        <div className="absolute inset-0 flex items-center justify-center px-2">
           <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
-            {student.name}
+            {student?.name ?? ""}
           </div>
         </div>
-      )}
 
-      {/* Corner flag tokens (2.5x size). Purely visual; pointer-events-none so taps go to seat/slices */}
-      {assigned && (
-        <>
-          {/* Top-left: IEP (orange), EC (yellow) */}
-          {(flags?.iep504 || flags?.ec) && (
-        <div className="absolute top-2 left-2 z-20 flex gap-1 pointer-events-none">
-              {flags?.iep504 && (
-                <span title="IEP" className="inline-block w-5 h-5 rounded-full border border-orange-700" style={{ backgroundColor: "#f97316" }} />
-              )}
-              {flags?.ec && (
-                <span title="EC" className="inline-block w-5 h-5 rounded-full border border-yellow-700" style={{ backgroundColor: "#facc15" }} />
-              )}
-            </div>
+        {/* === Corner tokens (z-20 sits above slices) === */}
+
+        {/* TOP-LEFT: EC (yellow, full size), then IEP (orange, 50%) */}
+        <div className="absolute top-2 left-2 z-20 flex items-start gap-1">
+          {flags?.ec && (
+            <span
+              style={circle(BASE, { background: "#F59E0B" /* amber-500 */ })}
+            />
           )}
-
-          {/* Top-right: Bubble (hatched purple) OR CCR (blue). Mutually exclusive by toggle logic. */}
-          {(flags?.bubble || flags?.ccr) && (
-          <div className="absolute top-2 right-2 z-20 flex gap-1 pointer-events-none">
-              {flags?.bubble && (
-                <span
-                  title="Bubble"
-                  className="inline-block w-5 h-5 rounded-sm border"
-                  style={{
-                    backgroundColor: "#a78bfa",
-                    borderColor: "#4c1d95",
-                    backgroundImage:
-                      "repeating-linear-gradient(45deg, rgba(76,29,149,0.6) 0 2px, rgba(167,139,250,0.0) 2px 4px)"
-                  }}
-                />
-              )}
-              {flags?.ccr && (
-                <span title="CCR" className="inline-block w-5 h-5 rounded-sm border border-blue-800" style={{ backgroundColor: "#3b82f6" }} />
-              )}
-            </div>
+          {flags?.iep504 && (
+            <span
+              style={circle(SMALL, { background: "#F97316" /* orange-500 */ })}
+            />
           )}
+        </div>
 
-          {/* Bottom-left: ML + ML New (same purple) */}
-          {(flags?.ml || flags?.mlNew) && (
-<div className="absolute bottom-2 left-2 z-20 flex gap-1 pointer-events-none">
-              {flags?.ml && (
-                <span title="ML" className="inline-block w-5 h-5 rounded-full border border-purple-800" style={{ backgroundColor: "#7c3aed" }} />
-              )}
-              {flags?.mlNew && (
-                <span title="ML New" className="inline-block w-5 h-5 rounded-full border border-purple-800" style={{ backgroundColor: "#7c3aed" }} />
-              )}
-            </div>
+        {/* TOP-RIGHT: Bubble (hatched purple, 125%) OR CCR (blue, 125%) */}
+        <div className="absolute top-2 right-2 z-20 flex items-start gap-1">
+          {showBubble && (
+            <span
+              style={circle(LARGE, { ...bubbleHatch })}
+            />
           )}
-
-          {/* Bottom-right: CA (white with black border) */}
-          {flags?.ca && (
-   <div className="absolute bottom-2 right-2 z-20 pointer-events-none">
-
-              <span title="CA" className="inline-block w-5 h-5 rounded-full border border-black bg-white" />
-            </div>
+          {showCCR && (
+            <span
+              style={circle(LARGE, {
+                background: "#3B82F6", // blue-500
+              })}
+            />
           )}
-        </>
-      )}
+        </div>
+
+        {/* BOTTOM-LEFT: ML + ML New (both purple, 50%, second overlaps 25%) */}
+        {(flags?.ml || flags?.mlNew) && (
+          <div className="absolute bottom-2 left-2 z-20 flex items-end">
+            {flags?.ml && (
+              <span
+                style={circle(SMALL, { background: "#7C3AED" /* violet-600 */ })}
+              />
+            )}
+            {flags?.mlNew && (
+              <span
+                style={circle(SMALL, {
+                  background: "#7C3AED",
+                  marginLeft: flags?.ml ? -OVERLAP : 0,
+                })}
+              />
+            )}
+          </div>
+        )}
+
+        {/* BOTTOM-RIGHT: CA (white with dark border, 125%) */}
+        {flags?.ca && (
+          <div className="absolute bottom-2 right-2 z-20">
+            <span
+              style={circle(LARGE, {
+                background: "#ffffff",
+                boxShadow: "inset 0 0 0 2px #111827", // ring-ish border (gray-900)
+              })}
+            />
+          </div>
+        )}
+
+        {/* (Skill level badge removed per your request) */}
+      </div>
     </div>
   );
 }
