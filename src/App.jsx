@@ -315,21 +315,22 @@ function Seat({
   singleMode,
   allowSeatClick
 }) {
-  // Absent overlay color/label logic is unchanged
   const isAbsent = singleMode && baseLevel === 5;
+
+  // base background/tint
   const bgClass = isAbsent
     ? "bg-gray-100 border-gray-300"
     : (singleMode && baseLevel != null
         ? `${LEVELS[baseLevel].bg} border-slate-300`
         : "bg-white border-slate-300 hover:shadow-sm");
 
-  // --- sizing for corner tokens ---
-  const BASE = 20;                    // current “standard” token size (~w-5 h-5)
-  const SMALL = Math.round(BASE * 0.5);   // 50% (ML/ML New, IEP)
-  const LARGE = Math.round(BASE * 1.25);  // +25% (Bubble/CCR, CA)
-  const OVERLAP = Math.round(SMALL * 0.25); // 25% overlap between ML + ML New
+  // --- token sizes ---
+  const BASE = 20;                      // “normal” token
+  const SMALL = Math.round(BASE * 0.5); // 50% — ML, ML New, IEP
+  const LARGE = Math.round(BASE * 1.25);// +25% — Bubble/CCR, CA
+  const OVERLAP = Math.round(SMALL * 0.25); // 25% overlap between ML and ML New
 
-  // helpers for circles
+  // token helpers
   const circle = (size, style = {}) => ({
     width: size,
     height: size,
@@ -337,8 +338,6 @@ function Seat({
     display: "inline-block",
     ...style,
   });
-
-  // hatched purple for Bubble (circle with stripes)
   const bubbleHatch = {
     backgroundColor: "#7C3AED",
     backgroundImage:
@@ -346,35 +345,30 @@ function Seat({
     backgroundSize: "12px 12px",
   };
 
-  // pick top-right token (mutually exclusive in UI; enforce visually here too)
+  // Bubble vs CCR is mutually exclusive (visual enforcement)
   const showCCR = !!flags?.ccr && !flags?.bubble;
   const showBubble = !!flags?.bubble && !flags?.ccr;
 
   return (
     <div
       className={clsx(
-        "relative rounded-xl border min-h-[78px] cursor-pointer select-none",
+        "relative rounded-xl border min-h-[78px] cursor-pointer select-none overflow-hidden", // <- overflow-hidden fixes bleed
         bgClass
       )}
       onClick={allowSeatClick ? onSeatClick : undefined}
     >
-      {/* multi-skill slices (kept behind tokens) */}
+      {/* slices behind everything */}
       {slices && slices.length > 0 && (
         <div className="absolute inset-0 rounded-xl overflow-hidden flex z-0">
           {slices.map((sl, idx) => (
             <div
               key={idx}
               className="h-full relative"
-              style={{
-                width: `${100 / slices.length}%`,
-                background: overlayColor(sl.level),
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSliceClick?.(idx);
-              }}
+              style={{ width: `${100 / slices.length}%`, background: overlayColor(sl.level) }}
+              onClick={(e) => { e.stopPropagation(); onSliceClick?.(idx); }}
               title={sl.title}
             >
+              {/* tiny letter kept; remove if you want pure color */}
               <div className="absolute left-0 right-0 bottom-0 pb-[2px] flex items-end justify-center text-[10px] text-slate-700 font-semibold select-none pointer-events-none">
                 {sl.level === 3 ? "P" : sl.level === 2 ? "D" : sl.level === 0 ? "H" : sl.level === 5 ? "A" : ""}
               </div>
@@ -386,7 +380,7 @@ function Seat({
         </div>
       )}
 
-      {/* Absent X overlay (only in single-skill view) */}
+      {/* Absent X overlay (single-skill only) */}
       {isAbsent && (
         <div className="absolute inset-0 pointer-events-none opacity-70 z-0">
           <div className="absolute left-0 top-1/2 w-full h-[2px] bg-gray-500 rotate-45"></div>
@@ -394,84 +388,61 @@ function Seat({
         </div>
       )}
 
-      {/* Name + corner tokens; make the layer non-interactive so slices/seat get clicks */}
-      <div className="relative p-2 h-full pointer-events-none grid">
-        {/* Centered name — blank when seat unassigned */}
-        <div className="absolute inset-0 flex items-center justify-center px-2">
-          <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
-            {student?.name ?? ""}
-          </div>
+      {/* name layer — centered, on its own z */}
+      <div className="absolute inset-0 grid place-items-center px-2 z-10 pointer-events-none">
+        <div className="font-medium text-slate-800 text-center leading-tight line-clamp-2">
+          {student?.name || "" /* blank if unassigned */}
         </div>
-
-        {/* === Corner tokens (z-20 sits above slices) === */}
-
-        {/* TOP-LEFT: EC (yellow, full size), then IEP (orange, 50%) */}
-        <div className="absolute top-2 left-2 z-20 flex items-start gap-1">
-          {flags?.ec && (
-            <span
-              style={circle(BASE, { background: "#F59E0B" /* amber-500 */ })}
-            />
-          )}
-          {flags?.iep504 && (
-            <span
-              style={circle(SMALL, { background: "#F97316" /* orange-500 */ })}
-            />
-          )}
-        </div>
-
-        {/* TOP-RIGHT: Bubble (hatched purple, 125%) OR CCR (blue, 125%) */}
-        <div className="absolute top-2 right-2 z-20 flex items-start gap-1">
-          {showBubble && (
-            <span
-              style={circle(LARGE, { ...bubbleHatch })}
-            />
-          )}
-          {showCCR && (
-            <span
-              style={circle(LARGE, {
-                background: "#3B82F6", // blue-500
-              })}
-            />
-          )}
-        </div>
-
-        {/* BOTTOM-LEFT: ML + ML New (both purple, 50%, second overlaps 25%) */}
-        {(flags?.ml || flags?.mlNew) && (
-          <div className="absolute bottom-2 left-2 z-20 flex items-end">
-            {flags?.ml && (
-              <span
-                style={circle(SMALL, { background: "#7C3AED" /* violet-600 */ })}
-              />
-            )}
-            {flags?.mlNew && (
-              <span
-                style={circle(SMALL, {
-                  background: "#7C3AED",
-                  marginLeft: flags?.ml ? -OVERLAP : 0,
-                })}
-              />
-            )}
-          </div>
-        )}
-
-        {/* BOTTOM-RIGHT: CA (white with dark border, 125%) */}
-        {flags?.ca && (
-          <div className="absolute bottom-2 right-2 z-20">
-            <span
-              style={circle(LARGE, {
-                background: "#ffffff",
-                boxShadow: "inset 0 0 0 2px #111827", // ring-ish border (gray-900)
-              })}
-            />
-          </div>
-        )}
-
-        {/* (Skill level badge removed per your request) */}
       </div>
+
+      {/* === corner tokens (always above slices & name) === */}
+      {/* TOP-LEFT: EC full (yellow), then IEP half (orange) */}
+      <div className="absolute top-2 left-2 z-20 pointer-events-none flex items-start gap-1">
+        {flags?.ec && (
+          <span style={circle(BASE, { background: "#F59E0B" })} />
+        )}
+        {flags?.iep504 && (
+          <span style={circle(SMALL, { background: "#F97316" })} />
+        )}
+      </div>
+
+      {/* TOP-RIGHT: Bubble (hatched purple, large) OR CCR (blue, large) */}
+      <div className="absolute top-2 right-2 z-20 pointer-events-none flex items-start gap-1">
+        {showBubble && <span style={circle(LARGE, { ...bubbleHatch })} />}
+        {showCCR && <span style={circle(LARGE, { background: "#3B82F6" })} />}
+      </div>
+
+      {/* BOTTOM-LEFT: ML + ML New (both purple, half-size; second overlaps 25%) */}
+      {(flags?.ml || flags?.mlNew) && (
+        <div className="absolute bottom-2 left-2 z-20 pointer-events-none flex items-end">
+          {flags?.ml && (
+            <span style={circle(SMALL, { background: "#7C3AED" })} />
+          )}
+          {flags?.mlNew && (
+            <span
+              style={circle(SMALL, {
+                background: "#7C3AED",
+                marginLeft: flags?.ml ? -OVERLAP : 0,
+              })}
+            />
+          )}
+        </div>
+      )}
+
+      {/* BOTTOM-RIGHT: CA (white with dark border, large) */}
+      {flags?.ca && (
+        <div className="absolute bottom-2 right-2 z-20 pointer-events-none">
+          <span
+            style={circle(LARGE, {
+              background: "#ffffff",
+              boxShadow: "inset 0 0 0 2px #111827",
+            })}
+          />
+        </div>
+      )}
     </div>
   );
 }
-
 
 /**
  * SeatGrid — supports:
@@ -1387,7 +1358,7 @@ const addClass = () => setState(s => {
                     {flagKeys.map(k => {
                       const on = !!st?.flags?.[k];
                       return (
-                       <button
+<button
   key={k}
   type="button"
   className={clsx(
@@ -1398,6 +1369,7 @@ const addClass = () => setState(s => {
   onDoubleClick={(e)=>{ e.preventDefault(); e.stopPropagation(); toggleFlag(st, k); }}
   title={`${FLAG_META[k].label} — double-tap to toggle`}
 >
+
   {FLAG_META[k].label}
 </button>
 
