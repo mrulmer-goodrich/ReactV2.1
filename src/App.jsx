@@ -1037,11 +1037,41 @@ export default function App(){
   };
 
   // Setup actions
-  const addClass = () => setState(s => {
-    const id = cryptoRandomId();
-    const cls = { id, name: `Block ${s.classes.length+1}`, rows:4, cols:9, layoutMode:"grid", seats:[], students:[], marks:{} };
-    return {...s, classes: [...s.classes, cls], selectedClassId: id};
-  });
+// Setup actions
+const addClass = () => setState(s => {
+  const id = cryptoRandomId();
+  const rows = 4, cols = 9;
+  const SEAT_W = 110, SEAT_H = 78, GAP = 8;
+
+  // build a full grid of seats with ids + x/y + rot
+  const seats = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      seats.push({
+        id: `seat-${r}-${c}`,
+        r, c,
+        x: c * (SEAT_W + GAP),
+        y: r * (SEAT_H + GAP),
+        rot: 0,
+        studentId: null,
+      });
+    }
+  }
+
+  const cls = {
+    id,
+    name: `Block ${s.classes.length + 1}`,
+    rows,
+    cols,
+    layoutMode: "grid",
+    seats,
+    students: [],
+    marks: {}
+  };
+
+  return { ...s, classes: [...s.classes, cls], selectedClassId: id };
+});
+
   const addStudent = () => {
     const name = prompt("Student name?");
     if (!name || !currentClass) return;
